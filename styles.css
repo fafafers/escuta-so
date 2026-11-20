@@ -775,3 +775,109 @@ table.data .num { text-align: right; }
 .checks { display: flex; flex-direction: column; gap: 6px; }
 .check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-weight: 700; cursor: pointer; }
 @media (max-width: 640px) { .setting { grid-template-columns: 1fr; } }
+
+/* =========================================================================
+ * Acabamento visual
+ * ========================================================================= */
+
+/* avisos: ícone e texto na mesma linha, botão desce se faltar espaço */
+.banner-text { flex: 1 1 320px; }
+.banner-ico { flex: none; }
+
+/* personagens vivos (piscam e se mexem devagar, sem distrair) */
+.critter .eyes { animation: blink 5.5s infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes blink { 0%, 93%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
+.logo-critter { animation: hop 2.8s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes hop {
+  0%, 60%, 100% { transform: translateY(0) scale(1); }
+  70% { transform: translateY(0) scale(1.07, .92); }
+  80% { transform: translateY(-14%) scale(.96, 1.05); }
+  90% { transform: translateY(0) scale(1.03, .97); }
+}
+.btn-start { animation: breathe 2.6s ease-in-out infinite; }
+.btn-start:active { animation: none; }
+@keyframes breathe { 50% { transform: scale(1.045); } }
+.buddy-body .critter, .reward-critter .critter, .no-pairs-art .critter { animation: sway 3.2s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes sway { 50% { transform: rotate(-3deg) translateY(-3px); } }
+
+/* menu: cartões maiores e mais convidativos */
+.mode-card { min-height: min(54vh, 380px); border: 4px solid rgba(255, 255, 255, .7); }
+.mode-name { font-size: clamp(20px, 3.2vmin, 28px); }
+.mode-art { height: clamp(120px, 26vmin, 220px); }
+.art-pair .critter { width: clamp(44px, 8.5vmin, 76px); }
+.mini-card { width: clamp(76px, 15vmin, 128px); height: clamp(76px, 15vmin, 128px); font-size: clamp(46px, 9vmin, 78px); }
+.art-drag .critter { width: clamp(100px, 20vmin, 170px); }
+
+/* o bichinho brilha quando a figura está em cima dele */
+.buddy.drop-hover .buddy-body { filter: drop-shadow(0 0 18px rgba(255, 190, 11, .95)); }
+
+/* mãozinha que mostra como arrastar (só na primeira rodada do modo 3) */
+.drag-hint {
+  position: fixed;
+  left: var(--x0);
+  top: var(--y0);
+  z-index: 30;
+  pointer-events: none;
+  font-family: var(--emoji);
+  font-size: 64px;
+  line-height: 1;
+  opacity: 0;
+  animation: drag-hint 1.8s ease-in-out 2;
+}
+@keyframes drag-hint {
+  0% { transform: translate(-30%, -10%) scale(.9); opacity: 0; }
+  15% { transform: translate(-30%, -10%) scale(1); opacity: 1; }
+  70% { transform: translate(calc(var(--dx) - 30%), calc(var(--dy) - 10%)); opacity: 1; }
+  100% { transform: translate(calc(var(--dx) - 30%), calc(var(--dy) - 10%)); opacity: 0; }
+}
+
+/* ---------- celular deitado / telas baixas ---------- */
+@media (max-height: 540px) {
+  #app { padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .btn-replay { width: 84px; height: 84px; }
+  .stage { gap: 3vmin; padding-top: 1vmin; }
+  .bubble { width: 84px; height: 84px; }
+  .bubbles { gap: 40px; }
+  .answer-same, .answer-diff { width: 190px; height: 104px; border-radius: 28px; }
+  .fig-card { width: min(46vh, 210px); height: min(46vh, 210px); }
+  .fig-card .fig-emoji { font-size: min(30vh, 130px); }
+  .stage-drag { flex-direction: row; justify-content: space-evenly; }
+  .buddy-body .critter { width: min(34vh, 160px); }
+  .mode-card { min-height: 0; padding: 14px; gap: 8px; }
+  .mode-art { height: 32vh; }
+  .title { margin-bottom: 0; }
+  .btn-start { min-height: 88px; }
+  .play-ico { width: 60px; height: 60px; }
+  .who-card { min-height: 150px; }
+  .avatar.big { width: 88px; height: 88px; font-size: 58px; }
+  .reward { gap: 2vmin; }
+}
+
+/* ---------- celular em pé ---------- */
+@media (max-width: 560px) {
+  #app { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .topbar { gap: 8px; }
+  .child-chip { padding-right: 8px; }
+  .child-chip > span:last-child { display: none; }
+  .game-top { grid-template-columns: auto 1fr auto; row-gap: 10px; }
+  .game-top .btn-replay { grid-column: 3; grid-row: 1; }
+  .game-top-side.end { grid-column: 1 / -1; grid-row: 2; justify-content: center; }
+  .dots { justify-content: center; gap: 6px; }
+  .dot { width: 14px; height: 14px; }
+  .answers { gap: 4vw; }
+  .answer-same, .answer-diff { width: 44vw; height: 32vw; min-height: 110px; border-radius: 26px; }
+  .cards { gap: 4vw; }
+  .fig-card { width: 44vw; height: 44vw; border-radius: 26px; }
+  .fig-card .fig-emoji { font-size: 28vw; }
+  .mode-grid { grid-template-columns: 1fr; overflow: auto; align-content: start; }
+  .mode-card { min-height: 0; flex-direction: row; justify-content: flex-start; padding: 14px 18px; }
+  .mode-art { width: auto; height: 96px; }
+  .who-grid { grid-template-columns: repeat(2, 1fr); }
+  .album-score { font-size: 20px; padding: 10px 14px; }
+}
+
+/* ---------- menos movimento, se o aparelho pedir ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  .hold-btn.holding .hold-ring { transition-duration: var(--hold-ms, 3s) !important; }
+}

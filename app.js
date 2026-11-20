@@ -252,7 +252,7 @@ function critter({ color = '#3a86ff', shape = 'round', cls = '' } = {}) {
     drop: `<path d="M50 6 C62 24 89 42 89 64 C89 84 71 95 50 95 C29 95 11 84 11 64 C11 42 38 24 50 6 Z" fill="${color}"/>`,
   }[shape] || '';
   return `<svg class="critter ${cls}" viewBox="0 0 100 100" aria-hidden="true">${body}`
-    + '<g class="eyes"><circle cx="37" cy="54" r="9.5" fill="#fff"/><circle cx="63" cy="54" r="9.5" fill="#fff"/>'
+    + `<g class="eyes" style="animation-delay:-${rand(5000)}ms"><circle cx="37" cy="54" r="9.5" fill="#fff"/><circle cx="63" cy="54" r="9.5" fill="#fff"/>`
     + `<circle cx="38.6" cy="55.2" r="4.8" fill="${ink}"/><circle cx="64.6" cy="55.2" r="4.8" fill="${ink}"/>`
     + '<circle cx="40.2" cy="53.4" r="1.7" fill="#fff"/><circle cx="66.2" cy="53.4" r="1.7" fill="#fff"/></g>'
     + '<circle cx="25" cy="68" r="5.5" fill="#ff8fab" opacity=".55"/><circle cx="75" cy="68" r="5.5" fill="#ff8fab" opacity=".55"/>'
@@ -1190,6 +1190,20 @@ async function showCorrection(g, steps, correctEl) {
 }
 const baseResult = pair => ({ pairId: pair.id, contrast: pair.contrast, words: `${pair.a.text} × ${pair.b.text}` });
 
+function dragHint(from, to) {
+  const a = from.getBoundingClientRect();
+  const b = to.getBoundingClientRect();
+  const x0 = a.left + a.width / 2;
+  const y0 = a.top + a.height / 2;
+  const hand = h('div', {
+    class: 'drag-hint', 'aria-hidden': 'true',
+    style: `--x0:${x0}px;--y0:${y0}px;--dx:${b.left + b.width / 2 - x0}px;--dy:${b.top + b.height / 2 - y0}px`,
+  }, '👆');
+  document.body.append(hand);
+  onLeave(() => hand.remove());
+  setTimeout(() => hand.remove(), 3800);
+}
+
 function flyTo(el, target) {
   const a = el.getBoundingClientRect();
   const b = target.getBoundingClientRect();
@@ -1339,7 +1353,8 @@ Object.assign(MODES, {
       const body = h('div', { class: 'buddy-body', html: critter(g.helper) });
       const buddy = h('div', { class: 'buddy' }, body, talkBtn);
       const cards = sides.map(s => h('button', { class: 'answer fig-card draggable', type: 'button', 'aria-label': pair[s].text }, figureEl(pair, s)));
-      g.stage.replaceChildren(buddy, h('div', { class: 'cards' }, cards));
+      const cardRow = h('div', { class: 'cards' }, cards);
+      g.stage.replaceChildren(buddy, cardRow);
       let replays = -1;
       let answered = false;
       const listen = async () => {
@@ -1347,7 +1362,11 @@ Object.assign(MODES, {
         replays++;
         buddy.classList.add('talking');
         const r = await g.play([{ pair, side: target }]);
-        if (!r.cancelled) { buddy.classList.remove('talking'); g.lock(''); }
+        if (r.cancelled) return;
+        buddy.classList.remove('talking');
+        g.lock('');
+        // Na primeira rodada, uma mãozinha mostra o gesto (sem apontar para nenhuma figura).
+        if (g.showDragHint) { g.showDragHint = false; dragHint(cardRow, body); }
       };
       g.replayBtn.onclick = listen;
       talkBtn.onclick = listen;
@@ -1434,6 +1453,7 @@ Screens.game = {
       stage,
       replayBtn,
       helper: HELPERS[rand(HELPERS.length)],
+      showDragHint: mode === 'drag',
       tts: false,
       alive: () => alive() && !left,
       lock(state) { stage.dataset.lock = state || ''; },
