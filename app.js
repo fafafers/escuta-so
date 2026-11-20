@@ -1563,3 +1563,646 @@ Screens.album = {
     ]);
   },
 };
+
+/* =========================================================================
+ * 4. ÁREA DA FONO: RODADA, CRIANÇAS, EVOLUÇÃO, BACKUP E AJUSTES
+ * ========================================================================= */
+
+const AVATARS = ['🦁', '🐯', '🐻', '🐼', '🐨', '🐸', '🐵', '🦊', '🐰', '🐱', '🐶', '🦄',
+  '🐙', '🐢', '🦖', '🐧', '🐝', '🦋', '🐳', '🦉', '🐞', '🦒', '🐘', '🦕'];
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const CONTRAST_ORDER = Object.keys(CONTRASTS);
+
+function statsBy(trials, key) {
+  const out = {};
+  for (const t of trials) {
+    const s = out[t[key]] || (out[t[key]] = { hit: 0, tot: 0 });
+    s.tot++;
+    if (t.correct) s.hit++;
+  }
+  return out;
+}
+const fmtSec = ms => (ms / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' s';
+function fmtSize(bytes) {
+  if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+  return (bytes / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' MB';
+}
+function ago(iso) {
+  const d = Math.floor(daysSince(iso));
+  return d < 1 ? 'hoje' : d < 2 ? 'ontem' : `há ${d} dias`;
+}
+const slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'crianca';
+function pctCell(st) {
+  if (!st) return '—';
+  const p = pct(st.hit, st.tot);
+  return h('span', { class: 'pct ' + (p >= 85 ? 'hi' : p >= 60 ? 'mid' : 'lo') }, p + '%');
+}
+
+/* ---------- salvar arquivos (CSV e backup) ---------- */
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = h('a', { href: url, download: name, style: 'display:none' });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+function canShareFile(file) {
+  try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) { return false; }
+}
+async function shareFile(file) {
+  try {
+    await navigator.share({ files: [file], title: file.name });
+    return 'ok';
+  } catch (e) {
+    return e && e.name === 'AbortError' ? 'cancel' : 'fail';
+  }
+}
+/** No iPad, abrir o menu Compartilhar (Salvar em Arquivos, e-mail, WhatsApp…); nos outros, baixar. */
+function saveFile(blob, name) {
+  const file = new File([blob], name, { type: blob.type });
+  if (IS_IOS && canShareFile(file)) {
+    shareFile(file).then(r => { if (r === 'fail') downloadBlob(blob, name); });
+    return;
+  }
+  downloadBlob(blob, name);
+}
+
+/* ---------- lembrete de backup ---------- */
+async function backupDue() {
+  try {
+    const last = await DB.kv('lastBackup', null);
+    if (last && daysSince(last) <= 14) return false;
+    return Bank.recorded.size > 0 || (await DB.count('sessions')) > 0 || (await DB.count('children')) > 0;
+  } catch (_) {
+    return false;
+  }
+}
+FonoBanners.push(async (el, show) => {
+  if (!(await backupDue())) return;
+  const last = await DB.kv('lastBackup', null);
+  el.append(h('div', { class: 'banner warn backup-reminder' },
+    h('span', { class: 'banner-ico', 'aria-hidden': 'true' }, '💾'),
+    h('span', { class: 'banner-text' },
+      h('strong', null, last ? `Seu último backup foi ${ago(last)}. ` : 'Você ainda não fez nenhum backup. '),
+      'Os dados ficam só neste aparelho: faça um backup para não perder as gravações e o histórico.'),
+    h('button', { class: 'btn small', type: 'button', onclick: () => show('backup') }, 'Fazer backup')));
+});
+
+/* ---------- progressão sugerida ----------
+ * Começar misturando contrastes diferentes; com dados suficientes, sugerir
+ * focar no contraste com menos acertos; quando tudo estiver alto, voltar a misturar. */
+async function suggestFocus(childId) {
+  const recent = (await sessionsOf(childId)).slice(-6);
+  const trials = recent.flatMap(s => s.trials);
+  const list = Object.entries(statsBy(trials, 'contrast'))
+    .filter(([, s]) => s.tot >= 4)
+    .map(([contrast, s]) => ({ contrast, hit: s.hit, tot: s.tot, rate: s.hit / s.tot }))
+    .sort((a, b) => a.rate - b.rate);
+  if (trials.length < 12 || !list.length) return { type: 'none', list, sessions: recent.length };
+  const worst = list[0];
+  if (worst.rate >= 0.85) return { type: 'good', list, sessions: recent.length };
+  if (list.length === 1 || worst.rate < 0.7 || list[1].rate - worst.rate >= 0.15) return { type: 'focus', worst, list, sessions: recent.length };
+  return { type: 'mix', list, sessions: recent.length };
+}
+function suggestionCard(sug, applyIds) {
+  const idsOf = cs => Bank.pairs.filter(p => cs.includes(p.contrast)).map(p => p.id);
+  const mixBtn = () => h('button', { class: 'btn small', type: 'button', onclick: () => applyIds(idsOf(TARGET_CONTRASTS)) }, 'Misturar os pares-alvo');
+  let text;
+  let action = null;
+  if (sug.type === 'none') {
+    text = 'Ainda há poucos dados desta criança. Sugestão: comece misturando pares de fonemas diferentes (P×B, T×D, CH×J) para descobrir em qual contraste ela tem mais dificuldade.';
+    action = mixBtn();
+  } else if (sug.type === 'focus') {
+    const c = CONTRASTS[sug.worst.contrast] || CONTRASTS.outro;
+    text = `Sugestão: focar em ${c.short} (${c.label}). Nas últimas sessões foi o contraste com menos acertos: ${pct(sug.worst.hit, sug.worst.tot)}% em ${sug.worst.tot} tentativas.`;
+    action = h('button', { class: 'btn small primary', type: 'button', onclick: () => applyIds(idsOf([sug.worst.contrast])) }, `Focar em ${c.short}`);
+  } else if (sug.type === 'good') {
+    text = 'Acertos altos (85% ou mais) em tudo o que foi treinado nas últimas sessões. Sugestão: voltar a misturar contrastes ou incluir um par opcional.';
+    action = mixBtn();
+  } else {
+    text = 'Os acertos estão parecidos entre os contrastes treinados. Sugestão: continuar misturando.';
+  }
+  return h('div', { class: 'suggest' },
+    h('span', { class: 'banner-ico', 'aria-hidden': 'true' }, '💡'),
+    h('div', { class: 'suggest-body' },
+      h('p', null, text),
+      sug.list.length > 0 && h('div', { class: 'row wrap' },
+        h('span', { class: 'muted small' }, `Últimas ${sug.sessions} sessões:`),
+        sug.list.map(x => h('span', { class: 'rate-chip' }, contrastChip(x.contrast), ` ${pct(x.hit, x.tot)}%`))),
+      action));
+}
+
+/* ---------- aba "Rodada": quais pares entram no jogo de cada criança ---------- */
+FonoTabs.push({ id: 'rodada', label: 'Rodada', icon: '🎯', order: 1, render: renderRoundTab });
+
+async function renderRoundTab(el) {
+  const kids = await allChildren();
+  const opts = [...kids, GUEST];
+  let childId = State.child && opts.some(k => k.id === State.child.id) ? State.child.id : opts[0].id;
+  const sel = h('select', { class: 'input' }, opts.map(k => h('option', { value: k.id }, `${k.avatar} ${k.nick}`)));
+  sel.value = childId;
+  sel.onchange = () => { childId = sel.value; draw(); };
+  const box = h('div');
+  add(el, [
+    h('h2', null, 'Próxima rodada'),
+    h('p', { class: 'muted' }, 'Escolha quais pares entram no jogo de cada criança. A escolha fica salva para as próximas sessões.'),
+    h('label', { class: 'field inline' }, h('span', null, 'Criança'), sel),
+    box,
+  ]);
+
+  async function draw() {
+    const ids = new Set(await roundPairIds(childId));
+    const sug = await suggestFocus(childId);
+    const save = () => DB.setKv('round:' + childId, Bank.pairs.filter(p => ids.has(p.id)).map(p => p.id));
+    const setIds = list => { ids.clear(); list.forEach(id => ids.add(id)); save(); draw(); };
+    const count = h('p', { class: 'round-count' });
+    const updateCount = () => {
+      const chosen = Bank.pairs.filter(p => ids.has(p.id));
+      const fig = chosen.filter(p => p.figure).length;
+      const noRec = chosen.filter(p => !Bank.hasAudio(p, 'a') || !Bank.hasAudio(p, 'b')).length;
+      count.replaceChildren(
+        h('strong', null, `${chosen.length} ${chosen.length === 1 ? 'par selecionado' : 'pares selecionados'}`),
+        ` · ${fig} com figura (usados em “Qual eu falei?” e “Ajude o bichinho”)`,
+        noRec > 0 && h('span', { class: 'warn-text' }, ` · ${noRec} sem gravação completa (voz sintética)`));
+    };
+    const groups = CONTRAST_ORDER.map(cid => {
+      const pairs = Bank.pairs.filter(p => p.contrast === cid);
+      if (!pairs.length) return null;
+      const all = h('input', { type: 'checkbox' });
+      const syncGroup = () => {
+        const n = pairs.filter(p => ids.has(p.id)).length;
+        all.checked = n === pairs.length;
+        all.indeterminate = n > 0 && n < pairs.length;
+      };
+      all.onchange = () => { pairs.forEach(p => (all.checked ? ids.add(p.id) : ids.delete(p.id))); save(); draw(); };
+      const rows = pairs.map(p => {
+        const cb = h('input', { type: 'checkbox', checked: ids.has(p.id) });
+        cb.onchange = () => { if (cb.checked) ids.add(p.id); else ids.delete(p.id); save(); syncGroup(); updateCount(); };
+        return h('label', { class: 'pair-check' }, cb,
+          h('span', { class: 'mini-figs' }, h('span', null, figureEl(p, 'a')), h('span', null, figureEl(p, 'b'))),
+          h('span', { class: 'pair-words' }, `${p.a.text} × ${p.b.text}`),
+          !p.figure && h('span', { class: 'badge sound' }, 'só som'),
+          (!Bank.hasAudio(p, 'a') || !Bank.hasAudio(p, 'b')) && h('span', { class: 'badge warn' }, 'sem gravação'));
+      });
+      syncGroup();
+      return h('fieldset', { class: 'round-group' },
+        h('legend', null, h('label', { class: 'group-check' }, all, contrastChip(cid),
+          !TARGET_CONTRASTS.includes(cid) && h('span', { class: 'muted small' }, 'opcional'))),
+        rows);
+    });
+    box.replaceChildren(
+      suggestionCard(sug, setIds),
+      h('div', { class: 'row wrap quick' },
+        h('button', { class: 'btn small', type: 'button', onclick: () => setIds(Bank.pairs.filter(p => TARGET_CONTRASTS.includes(p.contrast)).map(p => p.id)) }, 'Pares-alvo (P×B, T×D, CH×J)'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => setIds(Bank.pairs.map(p => p.id)) }, 'Todos'),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => setIds([]) }, 'Nenhum')),
+      count,
+      ...groups.filter(Boolean));
+    updateCount();
+  }
+  await draw();
+}
+
+/* ---------- aba "Crianças" ---------- */
+FonoTabs.push({ id: 'criancas', label: 'Crianças', icon: '🧒', order: 3, render: renderKidsTab });
+
+async function renderKidsTab(el, show) {
+  const kids = await allChildren();
+  const sessions = await DB.all('sessions');
+  const rerender = () => show('criancas');
+  add(el, [
+    h('div', { class: 'tab-head' },
+      h('h2', null, 'Crianças'),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => kidDialog(null, rerender) }, '➕ Nova criança')),
+    h('p', { class: 'muted' }, 'Só apelido e avatar: nenhum dado pessoal é guardado. Ao tocar em “Começar”, a criança escolhe o próprio avatar.'),
+    kids.length
+      ? h('div', { class: 'kid-list' }, kids.map(k => {
+        const ss = sessions.filter(s => s.childId === k.id);
+        const last = ss.map(s => s.date).sort().pop();
+        return h('div', { class: 'kid-row' },
+          h('span', { class: 'avatar' }, k.avatar),
+          h('div', { class: 'kid-info' },
+            h('strong', null, k.nick),
+            h('span', { class: 'muted small' }, `${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'}` + (last ? ` · última em ${fmtDate(last)}` : ''))),
+          h('button', { class: 'btn small', type: 'button', onclick: () => kidDialog(k, rerender) }, '✏️ Editar'),
+          h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar criança', title: 'Apagar criança', onclick: () => deleteKid(k, rerender) }, '🗑️'));
+      }))
+      : h('p', { class: 'empty' }, 'Nenhuma criança cadastrada. Enquanto isso, o jogo usa “Visitante”.'),
+  ]);
+}
+
+function kidDialog(kid, onDone) {
+  const d = kid ? { ...kid } : { id: uid(), nick: '', avatar: AVATARS[rand(AVATARS.length)], created: new Date().toISOString() };
+  const nick = h('input', { class: 'input', type: 'text', value: d.nick, maxlength: 20, autocomplete: 'off', placeholder: 'Ex.: Lulu' });
+  const grid = h('div', { class: 'avatar-grid', role: 'radiogroup', 'aria-label': 'Avatar' });
+  const paint = () => grid.replaceChildren(...AVATARS.map(a => h('button', {
+    class: 'avatar-opt' + (a === d.avatar ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(a === d.avatar),
+    onclick: () => { d.avatar = a; paint(); },
+  }, a)));
+  paint();
+  const save = async () => {
+    d.nick = nick.value.trim();
+    if (!d.nick) { toast('Escreva um apelido.'); return; }
+    await DB.put('children', d);
+    if (State.child && State.child.id === d.id) State.child = d;
+    closeOverlay();
+    onDone();
+  };
+  openOverlay([
+    h('h2', null, kid ? 'Editar criança' : 'Nova criança'),
+    h('label', { class: 'field' }, h('span', null, 'Apelido'), nick),
+    h('div', { class: 'field' }, h('span', null, 'Avatar'), grid),
+    h('div', { class: 'dialog-actions' },
+      h('button', { class: 'btn ghost', type: 'button', onclick: closeOverlay }, 'Cancelar'),
+      h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Salvar')),
+  ], { dismissible: false });
+}
+
+async function deleteKid(kid, onDone) {
+  if (!(await confirmBox(`Apagar “${kid.nick}” e todo o histórico desta criança? Isso não pode ser desfeito.`, { ok: 'Apagar', danger: true }))) return;
+  const ids = (await DB.all('sessions')).filter(s => s.childId === kid.id).map(s => s.id);
+  await DB.write(['children', 'sessions', 'kv'], t => {
+    t.objectStore('children').delete(kid.id);
+    ids.forEach(id => t.objectStore('sessions').delete(id));
+    t.objectStore('kv').delete('album:' + kid.id);
+    t.objectStore('kv').delete('round:' + kid.id);
+  });
+  if (State.child && State.child.id === kid.id) State.child = null;
+  onDone();
+}
+
+/* ---------- aba "Evolução" ---------- */
+FonoTabs.push({ id: 'evolucao', label: 'Evolução', icon: '📈', order: 4, render: renderProgressTab });
+
+function lineChart(series, labels) {
+  const W = 640;
+  const H = 260;
+  const L = 46;
+  const R = 16;
+  const T = 14;
+  const B = 34;
+  const n = labels.length;
+  const x = i => (n === 1 ? (L + W - R) / 2 : L + (i * (W - L - R)) / (n - 1));
+  const y = v => T + (1 - v) * (H - T - B);
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Porcentagem de acertos por contraste em cada sessão">`;
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+    s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`
+      + `<text class="axis" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v * 100}%</text>`;
+  }
+  const step = Math.ceil(n / 8);
+  labels.forEach((lab, i) => {
+    if (i % step === 0) s += `<text class="axis" x="${x(i)}" y="${H - 10}" text-anchor="middle">${lab}</text>`;
+  });
+  for (const se of series) {
+    let d = '';
+    se.values.forEach((v, i) => { if (v != null) d += `${d ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)} `; });
+    s += `<path d="${d}" fill="none" stroke="${se.color}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+    se.values.forEach((v, i) => {
+      if (v == null) return;
+      s += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="5" fill="#fff" stroke="${se.color}" stroke-width="3">`
+        + `<title>${se.name}: ${Math.round(v * 100)}% (${labels[i]})</title></circle>`;
+    });
+  }
+  return s + '</svg>';
+}
+
+function exportCsv(sessions, base, nickOf) {
+  const head = ['data', 'hora', 'crianca', 'modo', 'sessao_completa', 'contraste', 'par', 'tentativas', 'acertos', 'erros', 'percentual_acerto', 'vezes_que_ouviu_de_novo', 'voz_sintetica'];
+  const rows = [];
+  for (const s of sessions.slice().sort((a, b) => a.date.localeCompare(b.date))) {
+    const d = new Date(s.date);
+    const byPair = {};
+    for (const t of s.trials) {
+      const p = byPair[t.pairId] || (byPair[t.pairId] = { contrast: t.contrast, words: t.words, hit: 0, tot: 0, replays: 0, tts: false });
+      p.tot++;
+      if (t.correct) p.hit++;
+      p.replays += t.replays || 0;
+      if (t.tts) p.tts = true;
+    }
+    for (const p of Object.values(byPair)) {
+      rows.push([
+        d.toLocaleDateString('pt-BR'), d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        nickOf(s.childId), MODES[s.mode] ? MODES[s.mode].name : s.mode, s.complete ? 'sim' : 'não',
+        (CONTRASTS[p.contrast] || CONTRASTS.outro).short, p.words, p.tot, p.hit, p.tot - p.hit, pct(p.hit, p.tot),
+        p.replays, p.tts ? 'sim' : 'não',
+      ]);
+    }
+  }
+  const esc = v => {
+    const s = String(v == null ? '' : v);
+    return /[;"\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  // Separador ";" e BOM: abre certinho no Excel em português.
+  const csv = '﻿' + [head, ...rows].map(r => r.map(esc).join(';')).join('\r\n');
+  saveFile(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${base}-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+async function renderProgressTab(el) {
+  const kids = await allChildren();
+  const all = await DB.all('sessions');
+  const opts = kids.slice();
+  if (all.some(s => s.childId === GUEST.id)) opts.push(GUEST);
+  const nickOf = id => (opts.find(k => k.id === id) || { nick: '(removida)' }).nick;
+  add(el, h('div', { class: 'tab-head' },
+    h('h2', null, 'Evolução'),
+    all.length > 0 && h('button', { class: 'btn small', type: 'button', onclick: () => exportCsv(all, 'escuta-so-historico-completo', nickOf) }, '⬇️ CSV de todas as crianças')));
+  if (!opts.length || !all.length) {
+    el.append(h('p', { class: 'empty' }, 'Nenhuma sessão registrada ainda. Os resultados aparecem aqui depois que a criança jogar uma rodada.'));
+    return;
+  }
+  let childId = State.child && opts.some(k => k.id === State.child.id) ? State.child.id : opts[0].id;
+  let modeF = 'all';
+  const childSel = h('select', { class: 'input' }, opts.map(k => h('option', { value: k.id }, `${k.avatar} ${k.nick}`)));
+  childSel.value = childId;
+  childSel.onchange = () => { childId = childSel.value; draw(); };
+  const modeSel = h('select', { class: 'input' }, h('option', { value: 'all' }, 'Todos os modos'), Object.values(MODES).map(m => h('option', { value: m.id }, m.name)));
+  modeSel.onchange = () => { modeF = modeSel.value; draw(); };
+  const body = h('div');
+  add(el, [
+    h('div', { class: 'row wrap filters' },
+      h('label', { class: 'field inline' }, h('span', null, 'Criança'), childSel),
+      h('label', { class: 'field inline' }, h('span', null, 'Modo'), modeSel)),
+    body,
+  ]);
+
+  function draw() {
+    const ss = all.filter(s => s.childId === childId && (modeF === 'all' || s.mode === modeF)).sort((a, b) => a.date.localeCompare(b.date));
+    body.replaceChildren();
+    if (!ss.length) { body.append(h('p', { class: 'empty' }, 'Nenhuma sessão com esse filtro.')); return; }
+    const trials = ss.flatMap(s => s.trials);
+    const byC = statsBy(trials, 'contrast');
+    const contrasts = CONTRAST_ORDER.filter(c => byC[c]);
+    const perSession = ss.map(s => statsBy(s.trials, 'contrast'));
+    const lastOf = c => { for (let i = perSession.length - 1; i >= 0; i--) if (perSession[i][c]) return perSession[i][c]; return null; };
+
+    const cards = h('div', { class: 'stat-cards' }, contrasts.map(c => h('div', { class: 'stat-card', style: `--c:${CONTRASTS[c].color}` },
+      contrastChip(c),
+      h('div', { class: 'stat-big' }, pct(byC[c].hit, byC[c].tot) + '%'),
+      h('div', { class: 'muted small' }, `${byC[c].hit} de ${byC[c].tot} acertos`),
+      h('div', { class: 'small' }, 'última sessão: ', pctCell(lastOf(c))))));
+
+    const series = contrasts.map(c => ({
+      name: CONTRASTS[c].short, color: CONTRASTS[c].color,
+      values: perSession.map(st => (st[c] ? st[c].hit / st[c].tot : null)),
+    }));
+    const chart = h('div', { class: 'chart-box', html: lineChart(series, ss.map(s => fmtShortDate(s.date))) });
+    const legend = h('div', { class: 'legend' }, series.map(se => h('span', { class: 'legend-item' }, h('span', { class: 'legend-dot', style: `background:${se.color}` }), se.name)));
+
+    const byP = statsBy(trials, 'pairId');
+    const rows = Object.entries(byP).map(([pid, st]) => {
+      const t = trials.find(x => x.pairId === pid);
+      const lastS = ss.slice().reverse().find(s => s.trials.some(x => x.pairId === pid));
+      return { contrast: t.contrast, words: t.words, st, last: statsBy(lastS.trials.filter(x => x.pairId === pid), 'pairId')[pid] };
+    }).sort((a, b) => (CONTRAST_ORDER.indexOf(a.contrast) - CONTRAST_ORDER.indexOf(b.contrast)) || a.words.localeCompare(b.words, 'pt-BR'));
+    const table = h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Contraste'), h('th', null, 'Par'), h('th', { class: 'num' }, 'Tentativas'), h('th', { class: 'num' }, 'Acerto geral'), h('th', { class: 'num' }, 'Última sessão'))),
+      h('tbody', null, rows.map(r => h('tr', null,
+        h('td', null, contrastChip(r.contrast)), h('td', null, r.words), h('td', { class: 'num' }, r.st.tot),
+        h('td', { class: 'num' }, pctCell(r.st)), h('td', { class: 'num' }, pctCell(r.last))))));
+
+    const list = h('div', { class: 'session-list' }, ss.slice().reverse().map(s => {
+      const hit = s.trials.filter(t => t.correct).length;
+      const byc = statsBy(s.trials, 'contrast');
+      const del = async () => {
+        if (!(await confirmBox(`Apagar a sessão de ${fmtDateTime(s.date)}?`, { ok: 'Apagar', danger: true }))) return;
+        await DB.del('sessions', s.id);
+        all.splice(all.indexOf(s), 1);
+        draw();
+      };
+      return h('div', { class: 'session-row' },
+        h('div', { class: 'session-main' },
+          h('strong', null, fmtDateTime(s.date)),
+          h('span', { class: 'muted small' }, (MODES[s.mode] ? MODES[s.mode].name : s.mode) + (s.complete ? '' : ' · incompleta'))),
+        h('div', { class: 'row wrap session-chips' }, CONTRAST_ORDER.filter(c => byc[c]).map(c => h('span', { class: 'rate-chip' }, contrastChip(c), ` ${byc[c].hit}/${byc[c].tot}`))),
+        h('strong', { class: 'session-score' }, `${hit}/${s.trials.length}`),
+        h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar sessão', title: 'Apagar sessão', onclick: del }, '🗑️'));
+    }));
+
+    add(body, [
+      cards,
+      h('h3', null, 'Acertos por contraste ao longo das sessões'),
+      chart,
+      legend,
+      h('h3', null, 'Por par de palavras'),
+      h('div', { class: 'table-wrap' }, table),
+      h('div', { class: 'tab-head section-head' },
+        h('h3', null, `Sessões (${ss.length})`),
+        h('button', { class: 'btn small', type: 'button', onclick: () => exportCsv(ss, 'escuta-so-' + slug(nickOf(childId)), nickOf) }, '⬇️ CSV desta criança')),
+      list,
+    ]);
+  }
+  draw();
+}
+
+/* ---------- aba "Backup" ---------- */
+FonoTabs.push({ id: 'backup', label: 'Backup', icon: '💾', order: 5, render: renderBackupTab });
+
+function abToB64(ab) {
+  const bytes = new Uint8Array(ab);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function b64ToAb(b64) {
+  const s = atob(b64);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out.buffer;
+}
+async function buildBackup() {
+  const [pairs, audio, children, sessions, kv] = await Promise.all(STORES.map(s => DB.all(s)));
+  const word = w => ({ ...w, img: w.img ? { mime: w.img.mime, data: abToB64(w.img.data) } : null });
+  return {
+    app: 'escuta-so',
+    format: 1,
+    appVersion: APP_VERSION,
+    exportedAt: new Date().toISOString(),
+    pairs: pairs.map(p => ({ ...p, a: word(p.a), b: word(p.b) })),
+    audio: audio.map(r => ({ ...r, data: abToB64(r.data) })),       // gravações em base64
+    children,
+    sessions,
+    kv: kv.filter(k => k.key !== 'lastBackup'),
+  };
+}
+function parseBackup(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (_) { data = null; }
+  if (!data || data.app !== 'escuta-so' || !Array.isArray(data.pairs)) throw new Error('Este arquivo não é um backup do Escuta Só!.');
+  if (data.format > 1) throw new Error('Este backup foi feito por uma versão mais nova do jogo. Atualize o jogo e tente de novo.');
+  for (const k of ['audio', 'children', 'sessions', 'kv']) if (!Array.isArray(data[k])) data[k] = [];
+  return data;
+}
+async function restoreBackup(data) {
+  // Converte tudo antes de apagar qualquer coisa: se o arquivo estiver estragado, nada se perde.
+  const word = w => ({ ...w, img: w && w.img ? { mime: w.img.mime, data: b64ToAb(w.img.data) } : null });
+  const pairs = data.pairs.map(p => ({ ...p, a: word(p.a), b: word(p.b) }));
+  const audio = data.audio.map(r => ({ ...r, data: b64ToAb(r.data) }));
+  await DB.write(STORES, t => {
+    STORES.forEach(s => t.objectStore(s).clear());
+    pairs.forEach(p => t.objectStore('pairs').put(p));
+    audio.forEach(r => t.objectStore('audio').put(r));
+    data.children.forEach(c => t.objectStore('children').put(c));
+    data.sessions.forEach(s => t.objectStore('sessions').put(s));
+    data.kv.forEach(k => t.objectStore('kv').put(k));
+    t.objectStore('kv').put({ key: 'seeded', value: true });
+    t.objectStore('kv').put({ key: 'lastBackup', value: data.exportedAt || new Date().toISOString() });
+  });
+  Sound.cache.clear();
+  State.child = null;
+  await Bank.load();
+  await loadSettings();
+}
+
+async function renderBackupTab(el, show) {
+  const last = await DB.kv('lastBackup', null);
+  const counts = {
+    pairs: Bank.pairs.length, audio: Bank.recorded.size,
+    kids: await DB.count('children'), sessions: await DB.count('sessions'),
+  };
+  const lastLine = h('p', { class: last && daysSince(last) <= 14 ? 'ok-text' : 'warn-text' },
+    last ? `Último backup: ${fmtDateTime(last)} (${ago(last)}).` : 'Nenhum backup feito ainda.');
+  const out = h('div', { class: 'backup-out' });
+  const fileInput = h('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
+  fileInput.onchange = () => { const f = fileInput.files[0]; fileInput.value = ''; if (f) doImport(f); };
+
+  add(el, [
+    h('h2', null, 'Backup'),
+    h('p', null, 'Tudo fica guardado só neste aparelho. Se o navegador for limpo, o jogo for desinstalado ou o tablet for trocado, os dados se perdem. Por isso, faça backup com frequência e guarde o arquivo fora do tablet (e-mail, WhatsApp, Google Drive ou Arquivos do iCloud).'),
+    lastLine,
+    h('p', { class: 'muted small' }, `Neste aparelho: ${counts.pairs} pares de palavras, ${counts.audio} gravações, ${counts.kids} crianças e ${counts.sessions} sessões.`),
+    h('h3', null, 'Exportar'),
+    h('p', { class: 'muted small' }, 'O arquivo .json leva tudo: palavras, fotos, gravações, crianças, histórico e ajustes.'),
+    h('button', { class: 'btn primary', type: 'button', onclick: prepare }, '📦 Criar arquivo de backup'),
+    out,
+    h('h3', null, 'Importar'),
+    h('p', null, 'Use para levar os dados para outro aparelho ou para recuperar tudo depois de limpar o navegador. ',
+      h('strong', null, 'Atenção: a importação substitui todos os dados atuais deste aparelho.')),
+    h('button', { class: 'btn', type: 'button', onclick: () => fileInput.click() }, '📂 Escolher arquivo de backup…'),
+    fileInput,
+  ]);
+
+  async function prepare() {
+    out.replaceChildren(h('p', { class: 'muted' }, 'Preparando o arquivo…'));
+    let blob;
+    try {
+      blob = new Blob([JSON.stringify(await buildBackup())], { type: 'application/json' });
+    } catch (e) {
+      console.error(e);
+      out.replaceChildren(h('p', { class: 'warn-text' }, 'Não foi possível criar o backup: ' + (e.message || e)));
+      return;
+    }
+    const name = `escuta-so-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const file = new File([blob], name, { type: 'application/json' });
+    const mark = async () => {
+      const now = new Date().toISOString();
+      await DB.setKv('lastBackup', now);
+      lastLine.className = 'ok-text';
+      lastLine.textContent = `Último backup: ${fmtDateTime(now)} (hoje).`;
+      document.querySelectorAll('.backup-reminder').forEach(b => b.remove());
+      toast('Backup salvo! Guarde o arquivo em um lugar seguro, fora do tablet.', 4500);
+    };
+    const canShare = canShareFile(file);
+    out.replaceChildren(
+      h('p', null, `Arquivo pronto: `, h('strong', null, name), ` (${fmtSize(blob.size)})`),
+      h('div', { class: 'row wrap' },
+        canShare && h('button', {
+          class: 'btn primary', type: 'button',
+          onclick: async () => { const r = await shareFile(file); if (r === 'ok') mark(); else if (r === 'fail') { downloadBlob(blob, name); mark(); } },
+        }, '📤 Compartilhar / salvar em…'),
+        h('button', { class: 'btn' + (canShare ? '' : ' primary'), type: 'button', onclick: () => { downloadBlob(blob, name); mark(); } }, '⬇️ Baixar arquivo')),
+      h('p', { class: 'muted small' }, IS_IOS
+        ? 'No iPad: toque em “Compartilhar / salvar em…” e escolha “Salvar em Arquivos”, ou envie para você mesma por e-mail ou WhatsApp.'
+        : 'O arquivo vai para a pasta Downloads. Depois, envie para você mesma por e-mail, WhatsApp ou Google Drive.'));
+  }
+
+  async function doImport(file) {
+    let data;
+    try { data = parseBackup(await file.text()); } catch (e) { toast(e.message, 5000); return; }
+    const resumo = `${data.pairs.length} pares, ${data.audio.length} gravações, ${data.children.length} crianças e ${data.sessions.length} sessões`;
+    const when = data.exportedAt ? ` de ${fmtDateTime(data.exportedAt)}` : '';
+    if (!(await confirmBox(`Importar o backup${when} (${resumo})? Isso substitui TODOS os dados atuais deste aparelho.`, { ok: 'Importar e substituir', danger: true }))) return;
+    try {
+      await restoreBackup(data);
+      toast('Backup importado com sucesso!', 4000);
+      show('backup');
+    } catch (e) {
+      console.error(e);
+      toast('Não foi possível importar: ' + (e.message || e), 6000);
+    }
+  }
+}
+
+/* ---------- aba "Ajustes" ---------- */
+FonoTabs.push({ id: 'ajustes', label: 'Ajustes', icon: '🔧', order: 6, render: renderSettingsTab });
+
+async function renderSettingsTab(el) {
+  const s = State.settings;
+  const save = () => saveSettings();
+
+  const pauseOut = h('output', { class: 'range-out' }, fmtSec(s.pauseMs));
+  const pause = h('input', { type: 'range', min: 300, max: 3000, step: 100, value: s.pauseMs, 'aria-label': 'Pausa entre as palavras' });
+  pause.oninput = () => { s.pauseMs = +pause.value; pauseOut.textContent = fmtSec(s.pauseMs); };
+  pause.onchange = save;
+
+  const volOut = h('output', { class: 'range-out' }, Math.round(s.volume * 100) + '%');
+  const vol = h('input', { type: 'range', min: 0.1, max: 1, step: 0.05, value: s.volume, 'aria-label': 'Volume' });
+  vol.oninput = () => { s.volume = +vol.value; AudioEngine.setVolume(s.volume); volOut.textContent = Math.round(s.volume * 100) + '%'; };
+  vol.onchange = save;
+
+  const test = () => {
+    const p = Bank.pairs.find(x => Bank.hasAudio(x, 'a') && Bank.hasAudio(x, 'b')) || Bank.pairs[0];
+    if (p) Sound.sequence([{ pair: p, side: 'a' }, { pair: p, side: 'b' }], s.pauseMs);
+  };
+
+  const seg = h('div', { class: 'seg-group', role: 'radiogroup', 'aria-label': 'Tentativas por rodada' });
+  const paintSeg = () => seg.replaceChildren(...[8, 9, 10].map(n => h('button', {
+    class: 'seg' + (s.trials === n ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(s.trials === n),
+    onclick: () => { s.trials = n; save(); paintSeg(); },
+  }, String(n))));
+  paintSeg();
+
+  const modeChecks = Object.values(MODES).map(m => {
+    const cb = h('input', { type: 'checkbox', checked: s.modes[m.id] });
+    cb.onchange = () => {
+      if (!cb.checked && Object.values(MODES).filter(x => s.modes[x.id]).length <= 1) {
+        cb.checked = true;
+        toast('Deixe pelo menos um modo ativo.');
+        return;
+      }
+      s.modes[m.id] = cb.checked;
+      save();
+    };
+    return h('label', { class: 'check' }, cb, h('span', null, m.name));
+  });
+
+  let persisted = null;
+  let usage = null;
+  try { if (navigator.storage && navigator.storage.persisted) persisted = await navigator.storage.persisted(); } catch (_) { /* ok */ }
+  try { if (navigator.storage && navigator.storage.estimate) usage = (await navigator.storage.estimate()).usage; } catch (_) { /* ok */ }
+
+  add(el, [
+    h('h2', null, 'Ajustes'),
+    h('div', { class: 'setting' },
+      h('div', null, h('strong', null, 'Pausa entre as palavras'),
+        h('p', { class: 'muted small' }, 'Usada no modo “Igual ou diferente?” e quando o jogo repete o par depois de um erro. Padrão: 1,0 s.')),
+      h('div', { class: 'range-row' }, pause, pauseOut)),
+    h('div', { class: 'setting' },
+      h('div', null, h('strong', null, 'Volume'),
+        h('p', { class: 'muted small' }, 'Volume das palavras e dos sons do jogo (o volume do aparelho também conta).')),
+      h('div', { class: 'range-row' }, vol, volOut)),
+    h('button', { class: 'btn small', type: 'button', onclick: test }, '🔊 Testar pausa e volume com um par'),
+    h('div', { class: 'setting' },
+      h('div', null, h('strong', null, 'Tentativas por rodada')),
+      seg),
+    h('div', { class: 'setting' },
+      h('div', null, h('strong', null, 'Modos ativos'), h('p', { class: 'muted small' }, 'Os modos desligados não aparecem para a criança.')),
+      h('div', { class: 'checks' }, modeChecks)),
+    h('h3', null, 'Sobre os dados'),
+    h('p', null, 'Tudo fica guardado só neste aparelho: nada é enviado para a internet. Depois de aberto uma vez, o jogo funciona sem internet.'),
+    persisted === true && h('p', { class: 'small ok-text' }, '✔ O navegador protegeu os dados contra limpeza automática.'),
+    persisted === false && h('p', { class: 'small warn-text' }, '⚠ O navegador ainda não protegeu os dados contra limpeza automática. Instalar o jogo na tela inicial ajuda, e o backup garante.'),
+    usage != null && h('p', { class: 'muted small' }, 'Espaço usado: ' + fmtSize(usage)),
+    h('p', { class: 'muted small' }, 'Escuta Só! versão ' + APP_VERSION),
+  ]);
+}
