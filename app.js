@@ -89,7 +89,7 @@ const AGE_GROUPS = {
     trials: 8,
     trialOptions: [8, 9, 10],
     targets: ['pb', 'td', 'chj'],
-    activities: ['same', 'which', 'drag', 'rhyme', 'claps', 'onset', 'sounds', 'memory'],
+    activities: ['same', 'which', 'drag', 'rhyme', 'claps', 'onset', 'sounds', 'memory', 'train', 'voicing'],
     offByDefault: [],
   },
   detetives: {
@@ -103,7 +103,7 @@ const AGE_GROUPS = {
     trials: 10,
     trialOptions: [8, 10, 12],
     targets: ['td', 'kg', 'fv'],
-    activities: ['hidden', 'silly', 'dictation', 'noise', 'chopped', 'code', 'intruder', 'blitz', 'dichotic'],
+    activities: ['hidden', 'position', 'silly', 'dictation', 'secret', 'voicing', 'letter', 'noise', 'chopped', 'code', 'intruder', 'blitz', 'dichotic'],
     offByDefault: ['blitz', 'dichotic'],   // a fono liga quando quiser
   },
 };
@@ -780,6 +780,9 @@ const Sound = {
       const t0 = ctx.currentTime + 0.03;
       const src = ctx.createBufferSource();
       src.buffer = buf;
+      const rate = fx && fx.rate ? fx.rate : 1;          // "ouvir devagar": 0,75×
+      src.playbackRate.value = rate;
+      const dur = buf.duration / rate;
       let node = src;
       let lead = 0;
       let tail = 0;
@@ -801,7 +804,7 @@ const Sound = {
         const period = 1 / fx.gate.rate;
         const off = period * fx.gate.duty;
         gg.gain.setValueAtTime(1, t0);
-        for (let t = t0 + period - off; t < t0 + buf.duration; t += period) {
+        for (let t = t0 + period - off; t < t0 + dur; t += period) {
           gg.gain.setValueAtTime(1, t);
           gg.gain.linearRampToValueAtTime(0, t + 0.004);
           gg.gain.setValueAtTime(0, t + off - 0.004);
@@ -825,12 +828,12 @@ const Sound = {
         const ng = ctx.createGain();
         ng.gain.setValueAtTime(0.0001, t0);
         ng.gain.exponentialRampToValueAtTime(g * scale, t0 + 0.15);
-        ng.gain.setValueAtTime(g * scale, t0 + lead + buf.duration + tail - 0.15);
-        ng.gain.exponentialRampToValueAtTime(0.0001, t0 + lead + buf.duration + tail);
+        ng.gain.setValueAtTime(g * scale, t0 + lead + dur + tail - 0.15);
+        ng.gain.exponentialRampToValueAtTime(0.0001, t0 + lead + dur + tail);
         ns.connect(ng);
         ng.connect(bus);
         ns.start(t0, Math.random() * 3);
-        ns.stop(t0 + lead + buf.duration + tail + 0.05);
+        ns.stop(t0 + lead + dur + tail + 0.05);
         extra.push(ns);
         const sg = ctx.createGain();
         sg.gain.value = scale;
@@ -850,7 +853,7 @@ const Sound = {
         resolve();
       };
       src.start(t0 + lead);
-      setTimeout(finish, (lead + buf.duration + tail) * 1000 + 80);
+      setTimeout(finish, (lead + dur + tail) * 1000 + 80);
     });
   },
   /** Duas gravações ao mesmo tempo, uma em cada ouvido (escuta dicótica). */
@@ -861,19 +864,19 @@ const Sound = {
     await Promise.all([this.playBuffer(bl, { pan: -1 }), this.playBuffer(br, { pan: 1 })]);
     return false;
   },
-  speak(text) {
+  speak(text, rate = 0.85) {
     return new Promise(resolve => {
       if (!('speechSynthesis' in window)) { setTimeout(resolve, 700); return; }
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'pt-BR';
       if (ptVoice) u.voice = ptVoice;
-      u.rate = 0.85;
+      u.rate = rate;
       u.volume = Math.min(1, State.settings.volume);
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
       u.onend = finish;
       u.onerror = finish;
-      setTimeout(finish, 900 + text.length * 160);
+      setTimeout(finish, (900 + text.length * 160) * (0.85 / rate));
       speechSynthesis.speak(u);
     });
   },
@@ -891,6 +894,7 @@ const Sound = {
   },
   /** Voz sintética: os efeitos não se aplicam a ela (só o ruído de fundo, tocado junto). */
   async speakWithFx(text, fx) {
+    if (fx && fx.rate) return this.speak(text, 0.55);
     if (!fx || !fx.noise || !AudioEngine.ctx) return this.speak(text);
     const ctx = AudioEngine.ctx;
     const ns = NoiseGen.source(ctx, fx.noise.type);
@@ -1015,7 +1019,7 @@ const Recorder = {
 };
 
 /** Recorta o silêncio e iguala o volume. Devolve null se não ouviu nada. */
-function trimAndNormalize(x, sr) {
+function trimAndNormalize(x, sr, short = false) {
   const win = Math.max(1, Math.round(sr * 0.01));          // janelas de 10 ms
   const n = Math.floor(x.length / win);
   if (n < 5) return null;
@@ -1031,7 +1035,9 @@ function trimAndNormalize(x, sr) {
   if (loud < 0.004 || loud < noise * 3) return null;
   // Limiar baixo de propósito, para não cortar o vozeamento inicial do /b/ /d/ /g/ nem fricativas fracas.
   const thr = Math.min(Math.max(noise * 4, loud * 0.03), loud * 0.25);
-  const RUN = 3;   // precisa de 30 ms seguidos acima do limiar (ignora o "clique" do toque)
+  // Precisa de 30 ms seguidos acima do limiar (ignora o "clique" do toque). Sons sozinhos
+  // usam 10 ms: o estalo de um /t/ é mais curto que isso.
+  const RUN = short ? 1 : 3;
   const above = f => { for (let k = 0; k < RUN; k++) if (rms[f + k] <= thr) return false; return true; };
   let first = -1;
   let last = -1;
@@ -1083,7 +1089,7 @@ function encodeWav(samples, sr) {
   return buf;
 }
 
-async function processRecording(blob) {
+async function processRecording(blob, short = false) {
   const raw = await blob.arrayBuffer();
   let buf;
   try {
@@ -1100,7 +1106,7 @@ async function processRecording(blob) {
     }
     for (let i = 0; i < mono.length; i++) mono[i] /= buf.numberOfChannels;
   }
-  const out = trimAndNormalize(mono, buf.sampleRate);
+  const out = trimAndNormalize(mono, buf.sampleRate, short);
   if (!out) return null;
   return { data: encodeWav(out, buf.sampleRate), mime: 'audio/wav', processed: true, seconds: out.length / buf.sampleRate };
 }
@@ -1130,31 +1136,47 @@ function micError(e) {
 FonoTabs.push({ id: 'gravar', label: 'Gravar palavras', icon: '🎙️', order: 2, render: renderRecordTab });
 let recGroup = null;
 
-/** O que pode ser gravado em cada faixa, em seções. count: entra no contador "faltam gravar". */
+const PHON_NOTE = 'Grave cada som SOZINHO, sem vogal (diga “t”, não “tê”). Os fricativos (/f/ /v/ /s/ /z/ /ʃ/ /ʒ/) podem ser prolongados: fffff, vvvvv. Os plosivos (/p/ /b/ /t/ /d/ /k/ /g/) são um estalo curto e não dá para prolongar; no /b/ /d/ /g/, deixe o vozeamento aparecer antes do estalo. Sem gravação, o jogo toca uma palavra que começa com o som.';
+/** O que pode ser gravado, em seções. Entram as seções das atividades do pacote da faixa
+ *  ("all" = todas). count: entra no contador "faltam gravar". */
 function recordSections(gid) {
-  const out = [];
-  const pairs = Bank.inGroup(gid);
-  out.push({ id: 'pairs', title: 'Pares surdo × sonoro', count: true, pairs });
-  if (gid === 'pequenos') {
-    const word = w => ({ key: wordKey(w.text), text: w.text, fig: wordFig(w) });
-    out.push({ id: 'rhyme', title: 'Palavras do “Qual rima?”', count: true, items: ACTIVITY_WORDS.rhyme().map(word) });
-    out.push({ id: 'onset', title: 'Palavras do “Mesmo começo”', count: true, items: ACTIVITY_WORDS.onset().map(word) });
-    out.push({ id: 'claps', title: 'Palavras do “Bate palminhas”', count: true, items: ACTIVITY_WORDS.claps().map(word) });
+  const all = gid === 'all';
+  const acts = all ? Object.keys(ACTIVITIES) : groupOf(gid).activities;
+  const uses = (...ids) => ids.some(id => acts.includes(id));
+  const word = w => ({ key: wordKey(w.text), text: w.text, fig: w.emoji ? wordFig(w) : null });
+  const out = [{ id: 'pairs', title: 'Pares surdo × sonoro', count: true, pairs: all ? Bank.pairs : Bank.inGroup(gid) }];
+  if (uses('secret', 'voicing', 'letter', 'train')) {
+    out.push({
+      id: 'phon', title: 'Sons sozinhos', count: true, note: PHON_NOTE,
+      items: PHONEME_ORDER.map(id => {
+        const P = PHONEMES[id];
+        return { key: 'ph:' + id, text: P.ipa, sub: `${P.fric ? 'pode prolongar' : 'estalo curto'} · letra ${P.show} · ex.: ${P.word}`, fig: h('span', { class: 'syl-fig' }, P.ipa), tts: P.word, maxMs: 3000, short: true };
+      }),
+    });
+  }
+  if (uses('rhyme')) out.push({ id: 'rhyme', title: 'Palavras do “Qual rima?”', count: true, items: ACTIVITY_WORDS.rhyme().map(word) });
+  if (uses('onset')) out.push({ id: 'onset', title: 'Palavras do “Mesmo começo”', count: true, items: ACTIVITY_WORDS.onset().map(word) });
+  if (uses('claps')) out.push({ id: 'claps', title: 'Palavras do “Bate palminhas”', count: true, items: ACTIVITY_WORDS.claps().map(word) });
+  if (uses('position')) out.push({ id: 'position', title: 'Palavras do “Onde mora o som?”', count: true, items: uniqueWords(Lists.get('position').map(i => W(i.word, ''))).map(word) });
+  if (uses('train')) out.push({ id: 'train', title: 'Palavras do “Trem do som”', count: true, items: uniqueWords(Lists.get('train').map(i => W(i.word, i.emoji))).map(word) });
+  if (uses('sounds', 'memory')) {
     out.push({
       id: 'sounds', title: 'Sons do “Que som é esse?” e do “O bicho sumiu”', count: false,
       note: 'Opcional: os sons já vêm prontos (sintetizados). Grave por cima se quiser usar sons de verdade; apagando a gravação, volta o som pronto.',
-      items: Object.entries(SOUNDS).map(([id, s]) => ({ key: 'snd:' + id, text: s.name, synth: id, fig: h('span', { class: 'fig-emoji' }, s.emoji), maxMs: 4000 })),
+      items: Object.entries(SOUNDS).map(([id, snd]) => ({ key: 'snd:' + id, text: snd.name, synth: id, fig: h('span', { class: 'fig-emoji' }, snd.emoji), maxMs: 4000 })),
     });
-  } else {
-    const cs = CONTRAST_ORDER.filter(c => SYLLABLES[c] && pairs.some(p => p.contrast === c));
+  }
+  if (uses('code')) {
     out.push({
       id: 'syl', title: 'Sílabas do “Código secreto”', count: true,
-      items: cs.flatMap(c => SYLLABLES[c].map((s, i) => ({ key: 's:' + s[0], text: s[0], sub: CONTRASTS[c].short, fig: h('span', { class: 'syl-fig' }, s[0].toUpperCase()), tts: s[1] }))),
+      items: CONTRAST_ORDER.filter(c => SYLLABLES[c]).flatMap(c => SYLLABLES[c].map(x => ({ key: 's:' + x[0], text: x[0], sub: CONTRASTS[c].short, fig: h('span', { class: 'syl-fig' }, x[0].toUpperCase()), tts: x[1] }))),
     });
+  }
+  if (uses('silly')) {
     out.push({
       id: 'sent', title: 'Frases da “Frase maluca”', count: false,
       note: 'Opcional: grave a frase inteira, já com a palavra trocada. Sem gravação, o jogo junta as suas gravações das palavras e usa a voz sintética só no que faltar.',
-      items: SENTENCES.map(s => ({ key: 'f:' + s.id, text: sentenceText(s), sub: CONTRASTS[s.contrast].short + ' · trocada: ' + sentenceWrong(s), sentence: s, maxMs: 8000 })),
+      items: sentences().map(x => ({ key: 'f:' + x.id, text: sentenceText(x), sub: (CONTRASTS[x.contrast] || CONTRASTS.outro).short + ' · trocada: ' + sentenceWrong(x), sentence: x, maxMs: 8000 })),
     });
   }
   return out;
@@ -1166,7 +1188,7 @@ async function renderRecordTab(el) {
   let active = null;            // gravação em andamento: { key, stop }
   onLeave(() => { leaving = true; if (active) active.stop(); });
   const canRecord = Recorder.supported();
-  if (!AGE_GROUPS[recGroup]) recGroup = State.group;
+  if (!AGE_GROUPS[recGroup] && recGroup !== 'all') recGroup = State.group;
   const seg = h('div', { class: 'seg-group wide', role: 'tablist' });
   const summary = h('div', { class: 'rec-summary' });
   const list = h('div', { class: 'pair-list' });
@@ -1192,10 +1214,10 @@ async function renderRecordTab(el) {
   ]);
 
   function paintSeg() {
-    seg.replaceChildren(...GROUP_ORDER.map(id => h('button', {
+    seg.replaceChildren(...[...GROUP_ORDER, 'all'].map(id => h('button', {
       class: 'seg' + (id === recGroup ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': String(id === recGroup),
       onclick: () => { if (active) return; recGroup = id; paintSeg(); draw(); },
-    }, `${AGE_GROUPS[id].icon} ${AGE_GROUPS[id].name}`)));
+    }, id === 'all' ? '📚 Tudo' : `${AGE_GROUPS[id].icon} ${AGE_GROUPS[id].name}`)));
   }
 
   function updateSummary() {
@@ -1249,7 +1271,7 @@ async function renderRecordTab(el) {
     const shared = pair.groups.length > 1;
     return h('article', { class: 'pair-card' },
       h('div', { class: 'pair-head' },
-        recGroup === 'pequenos' && h('span', { class: 'badge ' + (pair.figure ? 'fig' : 'sound') }, pair.figure ? '🖼️ tem figura' : '👂 só som'),
+        recGroup !== 'detetives' && h('span', { class: 'badge ' + (pair.figure ? 'fig' : 'sound') }, pair.figure ? '🖼️ tem figura' : '👂 só som'),
         shared && h('span', { class: 'badge' }, 'nas duas faixas'),
         h('div', { class: 'spacer' }),
         h('button', { class: 'btn small ghost', type: 'button', onclick: () => editPairDialog(pair, draw, recGroup) }, '✏️ Editar')),
@@ -1297,7 +1319,7 @@ async function renderRecordTab(el) {
         active = null;
         if (leaving) return;
         paint('proc');
-        const res = await processRecording(blob);
+        const res = await processRecording(blob, !!it.short);
         if (!res) { paint(); toast('Não deu para ouvir. Fale um pouco mais perto do aparelho e tente de novo.', 4500); return; }
         await saveRecording(key, res);
         paint();
@@ -1333,7 +1355,7 @@ function editPairDialog(pair, onDone, editGroup = null) {
   const isNew = !pair;
   const d = isNew
     ? {
-      id: uid(), contrast: 'pb', figure: true, groups: [editGroup || DEFAULT_GROUP],
+      id: uid(), contrast: 'pb', figure: true, groups: [AGE_GROUPS[editGroup] ? editGroup : DEFAULT_GROUP],
       order: Bank.pairs.reduce((m, p) => Math.max(m, p.order || 0), 0) + 1,
       a: { text: '', emoji: '', img: null }, b: { text: '', emoji: '', img: null },
     }
@@ -2064,9 +2086,9 @@ function uniqueWords(list) {
   return [...seen.values()];
 }
 const ACTIVITY_WORDS = {
-  rhyme: () => uniqueWords(RHYME_SETS.flatMap(s => [s.model, s.match, ...s.others])),
-  onset: () => uniqueWords(ONSET_SETS.flatMap(s => [s.model, s.match, ...s.others])),
-  claps: () => uniqueWords(CLAP_WORDS.map(([w]) => w)),
+  rhyme: () => uniqueWords(rhymeSets().flatMap(x => [x.model, x.match, ...x.others])),
+  onset: () => uniqueWords(onsetSets().flatMap(x => [x.model, x.match, ...x.others])),
+  claps: () => uniqueWords(clapWords().map(([w]) => w)),
 };
 
 /** Posições equilibradas para a resposta certa entre k opções. */
@@ -2133,7 +2155,7 @@ Object.assign(ACTIVITIES, {
     desc: 'Consciência fonológica (rima): ouve a palavra-modelo e escolhe, entre três figuras, a que rima.',
     usesPairs: false,
     art: () => miniCards('🍞', '✋'),
-    build: (ctx, n) => buildModelTrials(RHYME_SETS, n),
+    build: (ctx, n) => buildModelTrials(rhymeSets(), n),
     run: (trial, g) => runModelChoice(trial, g, 'rhyme'),
   },
 
@@ -2146,7 +2168,8 @@ Object.assign(ACTIVITIES, {
     usesPairs: false,
     art: () => '<span class="art-claps"><span class="mini-card">🥁</span><span class="beat-mini"><i></i><i></i><i></i></span></span>',
     build(ctx, n) {
-      const byCount = [1, 2, 3, 4].map(c => shuffle(CLAP_WORDS.filter(([, s]) => s === c)));
+      const words = clapWords();
+      const byCount = [1, 2, 3, 4].map(c => shuffle(words.filter(([, x]) => x === c)));
       const counts = cycle([1, 2, 3, 4], n);
       const used = [0, 0, 0, 0];
       return counts.map(c => {
@@ -2225,7 +2248,7 @@ Object.assign(ACTIVITIES, {
     desc: 'Consciência fonêmica (som inicial /p/ /b/ /t/ /d/): escolhe a figura que começa com o mesmo som do modelo; um distrator sempre começa com o par surdo/sonoro.',
     usesPairs: false,
     art: () => miniCards('⚽', '🧢'),
-    build: (ctx, n) => buildModelTrials(ONSET_SETS, n),
+    build: (ctx, n) => buildModelTrials(onsetSets(), n),
     run: (trial, g) => runModelChoice(trial, g, 'onset'),
   },
 
@@ -2401,7 +2424,9 @@ Screens.game = {
     if (!def) { go('menu'); return; }
     const ctx = { child, G, def, pairs: def.usesPairs === false ? [] : await pairsForActivity(def, child.id, G.id) };
     if (!alive()) return;
-    const problem = def.check ? def.check(ctx) : (def.usesPairs !== false && !ctx.pairs.length ? noPairsMsg(def) : null);
+    if (def.usesPairs !== false && !ctx.pairs.length) { renderUnavailable(app, noPairsMsg(def)); return; }
+    if (def.items) ctx.items = def.items(ctx);
+    const problem = def.check ? def.check(ctx) : null;
     if (problem) { renderUnavailable(app, problem); return; }
 
     const adapt = def.adaptive ? await Adaptive.load(child.id, def) : null;
@@ -2552,6 +2577,10 @@ Screens.game = {
       if (g.timeUp()) break;
     }
     if (timer) timer.stop();
+    if (def.afterRound && session.trials.length && g.alive()) {      // ex.: revelação das letras (Vibra ou sopra?)
+      await def.afterRound(g, session);
+      if (!g.alive()) return;
+    }
     session.complete = true;
     if (timed) session.score = session.trials.filter(t => t.correct).length;
     if (adapt) await adapt.save(session.adaptive.max);
@@ -2900,12 +2929,12 @@ Object.assign(ACTIVITIES, {
     art: () => detArt('🤪', 'leite de FACA?'),
     check(ctx) {
       const cs = new Set(ctx.pairs.map(p => p.contrast));
-      if (!SENTENCES.some(s => cs.has(s.contrast))) return 'A Frase maluca tem frases de T×D, K×G, F×V, P×B, S×Z e CH×J. Em “Rodada”, escolha pares de algum desses contrastes.';
+      if (!sentences().some(x => cs.has(x.contrast))) return 'A Frase maluca tem frases de T×D, K×G, F×V, P×B, S×Z e CH×J. Em “Rodada”, escolha pares de algum desses contrastes.';
       return null;
     },
     build(ctx, n) {
       const cs = new Set(ctx.pairs.map(p => p.contrast));
-      return cycle(SENTENCES.filter(s => cs.has(s.contrast)), n).map(s => ({ s }));
+      return cycle(sentences().filter(x => cs.has(x.contrast)), n).map(x => ({ s: x }));
     },
     async run(trial, g) {
       const { s } = trial;
@@ -3300,6 +3329,573 @@ Object.assign(ACTIVITIES, {
         correctLeft: ears.includes('left') ? answers.left === want.left : null,
         correctRight: ears.includes('right') ? answers.right === want.right : null,
         replays: Math.max(0, replays),
+      };
+    },
+  },
+});
+
+/* ---------- listas das atividades (editáveis na área da fono; guardadas em kv "list:<nome>") ----------
+ * Ficam num formato "plano" (um objeto por linha) para o editor genérico. Sem nada salvo, valem as
+ * listas iniciais abaixo. Todas as palavras seguem a fonologia e a ortografia do português brasileiro. */
+const TW = (phon, word, emoji) => ({ phon, word, emoji });
+const LIST_DEFAULTS = {
+  rhyme: () => RHYME_SETS.map(s => ({ model: s.model.text, me: s.model.emoji, match: s.match.text, ma: s.match.emoji, d1: s.others[0].text, d1e: s.others[0].emoji, d2: s.others[1].text, d2e: s.others[1].emoji })),
+  onset: () => ONSET_SETS.map(s => ({ contrast: s.contrast, model: s.model.text, me: s.model.emoji, match: s.match.text, ma: s.match.emoji, d1: s.others[0].text, d1e: s.others[0].emoji, d2: s.others[1].text, d2e: s.others[1].emoji })),
+  claps: () => CLAP_WORDS.map(([w, syl]) => ({ word: w.text, emoji: w.emoji, syl })),
+  silly: () => SENTENCES.map(s => ({ ...s })),
+  position: () => [
+    ...['estudo', 'tomada', 'ditado', 'tarde', 'dente', 'doente', 'tudo', 'todo', 'dentista', 'vestido', 'partida', 'atitude', 'data'].map(word => ({ contrast: 'td', word })),
+    ...['favor', 'fivela', 'favela', 'ferver', 'fervura', 'fava', 'festivo', 'favorito'].map(word => ({ contrast: 'fv', word })),
+    ...['carga', 'cargo', 'colega', 'coringa', 'cogumelo', 'escorrega', 'cangaço'].map(word => ({ contrast: 'kg', word })),
+    ...['pombo', 'bispo', 'pobre'].map(word => ({ contrast: 'pb', word })),
+  ],
+  train: () => [
+    TW('d', 'dente', '🦷'), TW('d', 'doce', '🍬'), TW('d', 'medalha', '🏅'), TW('d', 'cadeira', '🪑'), TW('d', 'nada', '🏊'), TW('d', 'sede', '🥤'), TW('d', 'bode', '🐐'),
+    TW('t', 'tênis', '👟'), TW('t', 'tigre', '🐯'), TW('t', 'estrela', '⭐'), TW('t', 'gato', '🐱'), TW('t', 'pato', '🦆'), TW('t', 'sapato', '👞'),
+    TW('f', 'faca', '🔪'), TW('f', 'foca', '🦭'), TW('f', 'fogo', '🔥'), TW('f', 'elefante', '🐘'), TW('f', 'telefone', '☎️'), TW('f', 'sofá', '🛋️'), TW('f', 'girafa', '🦒'), TW('f', 'chefe', '👨‍🍳'),
+    TW('v', 'vaca', '🐄'), TW('v', 'vela', '🕯️'), TW('v', 'violão', '🎸'), TW('v', 'cavalo', '🐴'), TW('v', 'gaveta', '🗄️'), TW('v', 'uva', '🍇'), TW('v', 'ovo', '🥚'), TW('v', 'chuva', '🌧️'), TW('v', 'luva', '🧤'),
+    TW('k', 'casa', '🏠'), TW('k', 'copo', '🥛'), TW('k', 'escova', '🪥'), TW('k', 'boneca', '🪆'), TW('k', 'faca', '🔪'),
+    TW('g', 'gato', '🐱'), TW('g', 'galo', '🐓'), TW('g', 'agulha', '🪡'), TW('g', 'fogo', '🔥'), TW('g', 'manga', '🥭'),
+    TW('p', 'panela', '🍲'), TW('p', 'pato', '🦆'), TW('p', 'sapato', '👞'), TW('p', 'lápis', '✏️'), TW('p', 'sapo', '🐸'),
+    TW('b', 'bola', '⚽'), TW('b', 'bota', '👢'), TW('b', 'cabelo', '💇'), TW('b', 'abelha', '🐝'), TW('b', 'cabra', '🐐'), TW('b', 'lobo', '🐺'),
+    TW('s', 'sapo', '🐸'), TW('s', 'sol', '☀️'), TW('s', 'pássaro', '🐦'), TW('z', 'zebra', '🦓'), TW('z', 'vizinho', '🏘️'), TW('z', 'mesa', '🪑'), TW('z', 'rosa', '🌹'),
+    TW('x', 'chave', '🔑'), TW('x', 'machado', '🪓'), TW('x', 'peixe', '🐟'), TW('x', 'bicho', '🐛'),
+    TW('j', 'janela', '🪟'), TW('j', 'jacaré', '🐊'), TW('j', 'tijolo', '🧱'), TW('j', 'laranja', '🍊'),
+  ],
+};
+const Lists = {
+  data: {},
+  async load() {
+    for (const k of Object.keys(LIST_DEFAULTS)) {
+      const saved = await DB.kv('list:' + k, null);
+      this.data[k] = Array.isArray(saved) ? saved : LIST_DEFAULTS[k]();
+    }
+  },
+  get(k) { return this.data[k] || (this.data[k] = LIST_DEFAULTS[k]()); },
+  isCustom: k => DB.kv('list:' + k, null).then(v => Array.isArray(v)),
+  async save(k, items) { this.data[k] = items; await DB.setKv('list:' + k, items); },
+  async reset(k) { this.data[k] = LIST_DEFAULTS[k](); await DB.del('kv', 'list:' + k); },
+};
+/* Leitura das listas no formato que as atividades usam. */
+const rhymeSets = () => Lists.get('rhyme').map(r => ({ model: W(r.model, r.me), match: W(r.match, r.ma), others: [W(r.d1, r.d1e), W(r.d2, r.d2e)] }));
+const onsetSets = () => Lists.get('onset').map(r => ({ contrast: r.contrast, model: W(r.model, r.me), match: W(r.match, r.ma), others: [W(r.d1, r.d1e), W(r.d2, r.d2e)] }));
+const clapWords = () => Lists.get('claps').map(c => [W(c.word, c.emoji), +c.syl || syllables(c.word)]);
+const sentences = () => Lists.get('silly').filter(s => /\{[^}]+\}/.test(s.text));
+InitHooks.push(() => Lists.load());
+
+/* =========================================================================
+ * 3d. SONS SOZINHOS, LETRAS E POSIÇÃO DO SOM (versão 3)
+ * ========================================================================= */
+
+/* ---------- fonemas isolados ----------
+ * A fono grava cada som sozinho (chave "ph:<id>"). Sem gravação, toca uma palavra
+ * que começa com o som (gravada por ela, se houver; senão, voz sintética). */
+const PHONEMES = {
+  p: { ipa: '/p/', show: 'P', letters: ['P'], voiced: false, fric: false, word: 'pato' },
+  b: { ipa: '/b/', show: 'B', letters: ['B'], voiced: true, fric: false, word: 'bola' },
+  t: { ipa: '/t/', show: 'T', letters: ['T'], voiced: false, fric: false, word: 'tênis' },
+  d: { ipa: '/d/', show: 'D', letters: ['D'], voiced: true, fric: false, word: 'dente' },
+  k: { ipa: '/k/', show: 'C', alt: 'ou QU, K', letters: ['C', 'Q', 'K'], voiced: false, fric: false, word: 'casa' },
+  g: { ipa: '/g/', show: 'G', alt: 'ou GU', letters: ['G'], voiced: true, fric: false, word: 'gato' },
+  f: { ipa: '/f/', show: 'F', letters: ['F'], voiced: false, fric: true, word: 'foca' },
+  v: { ipa: '/v/', show: 'V', letters: ['V'], voiced: true, fric: true, word: 'vaca' },
+  s: { ipa: '/s/', show: 'S', alt: 'ou SS, Ç, C', letters: ['S', 'Ç', 'C'], voiced: false, fric: true, word: 'sapo' },
+  z: { ipa: '/z/', show: 'Z', alt: 'ou S entre vogais', letters: ['Z', 'S'], voiced: true, fric: true, word: 'zebra' },
+  x: { ipa: '/ʃ/', show: 'X', alt: 'ou CH', letters: ['X'], voiced: false, fric: true, word: 'chave' },
+  j: { ipa: '/ʒ/', show: 'J', alt: 'ou G antes de E/I', letters: ['J', 'G'], voiced: true, fric: true, word: 'janela' },
+};
+const PHONEME_ORDER = ['p', 'b', 't', 'd', 'k', 'g', 'f', 'v', 's', 'z', 'x', 'j'];
+const CONTRAST_PHON = { pb: ['p', 'b'], td: ['t', 'd'], kg: ['k', 'g'], fv: ['f', 'v'], sz: ['s', 'z'], chj: ['x', 'j'] };
+const PHON_CONTRAST = Object.fromEntries(Object.entries(CONTRAST_PHON).flatMap(([c, ps]) => ps.map(p => [p, c])));
+/** Item tocável de um fonema: gravação do som sozinho → palavra-exemplo gravada → voz sintética. */
+function phonItem(id) {
+  const P = PHONEMES[id];
+  if (Bank.recorded.has('ph:' + id)) return { key: 'ph:' + id, text: P.word };
+  return { key: wordKey(P.word), text: P.word };
+}
+/** Fonemas dos contrastes escolhidos para a criança (pelo menos T×D). */
+function phonsFor(pairs) {
+  const cs = [...new Set(pairs.map(p => p.contrast))].filter(c => CONTRAST_PHON[c]);
+  return (cs.length ? cs : ['td']).flatMap(c => CONTRAST_PHON[c]);
+}
+
+/* ---------- onde está cada som numa palavra escrita (pelo SOM, não pela letra) ----------
+ * /k/ = c antes de a, o, u ou consoante; qu antes de e/i; k.   c antes de e/i é /s/.
+ * /g/ = g antes de a, o, u ou consoante; gu antes de e/i.      g antes de e/i é /ʒ/.
+ * /t/ /d/ /f/ /v/ /p/ /b/ = a própria letra. */
+const VOWELS = 'aeiou';
+function normChars(word) {
+  return [...word.normalize('NFC')].map(ch => {
+    const l = ch.toLowerCase();
+    return l === 'ç' ? 'ç' : l.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  });
+}
+function scanSounds(word) {
+  const c = normChars(word);
+  const out = [];
+  for (let i = 0; i < c.length; i++) {
+    const ch = c[i];
+    const nx = c[i + 1];
+    const front = nx === 'e' || nx === 'i';
+    const push = (phon, len) => out.push({ phon, start: i, len });
+    if ('tdfvpbk'.includes(ch)) push(ch, 1);
+    else if (ch === 'c') {
+      if (nx === 'h') { push('x', 2); i++; } else if (front) push('s', 1); else push('k', 1);
+    } else if (ch === 'ç') push('s', 1);
+    else if (ch === 'q') { if (nx === 'u' && (c[i + 2] === 'e' || c[i + 2] === 'i')) { push('k', 2); i++; } else push('k', 1); }
+    else if (ch === 'g') {
+      if (front) push('j', 1);
+      else if (nx === 'u' && (c[i + 2] === 'e' || c[i + 2] === 'i')) { push('g', 2); i++; } else push('g', 1);
+    } else if (ch === 'j') push('j', 1);
+    else if (ch === 's') {
+      if (nx === 's') { push('s', 2); i++; } else if (i > 0 && VOWELS.includes(c[i - 1]) && nx && VOWELS.includes(nx)) push('z', 1); else push('s', 1);
+    } else if (ch === 'z') push(i === c.length - 1 ? 's' : 'z', 1);
+    else if (ch === 'x') push('x', 1);
+  }
+  return out;
+}
+/** Posição do som na palavra: início (nenhuma vogal antes), fim (só uma vogal depois) ou meio. */
+function soundPos(word, start, len) {
+  const c = normChars(word);
+  if (!c.slice(0, start).some(ch => VOWELS.includes(ch))) return 'inicio';
+  const rest = c.slice(start + len).join('');
+  const groups = (rest.match(/[aeiou]+/g) || []).length;
+  return groups <= 1 ? 'fim' : 'meio';
+}
+const POS_LABEL = { inicio: 'início', meio: 'meio', fim: 'fim' };
+/** Espaços de "Onde mora o som?": cada ocorrência dos dois sons do contraste. */
+function soundSlots(word, contrast) {
+  const ph = CONTRAST_PHON[contrast];
+  if (!ph) return [];
+  const chars = [...word.normalize('NFC')];
+  return scanSounds(word).filter(o => ph.includes(o.phon)).map(o => ({
+    ...o, side: o.phon === ph[0] ? 'a' : 'b', pos: soundPos(word, o.start, o.len),
+    graph: chars.slice(o.start, o.start + o.len).join('').toUpperCase(),
+  }));
+}
+const POSITION_CONTRASTS = ['td', 'fv', 'kg', 'pb'];
+/** Valida uma palavra de "Onde mora o som?". Devolve a mensagem de erro ou null. */
+function checkPositionWord(word, contrast) {
+  if (!POSITION_CONTRASTS.includes(contrast)) return 'Use T×D, F×V, K×G ou P×B (S×Z e CH×J têm letras ambíguas demais).';
+  const s = soundSlots(word, contrast);
+  const [pa, pb] = CONTRAST_PHON[contrast].map(p => PHONEMES[p].ipa);
+  if (!s.some(x => x.side === 'a') || !s.some(x => x.side === 'b')) return `Pelo som, “${word}” precisa ter ${pa} e ${pb}. Lembre: c/g antes de e/i não é /k/ /g/.`;
+  if (s.length > 4) return 'Palavra com lugares demais (máximo 4).';
+  return null;
+}
+/** Valida uma palavra do "Trem do som": o som-alvo aparece uma vez só. Devolve { pos } ou { error }. */
+function checkTrainWord(word, phon) {
+  const occ = scanSounds(word).filter(o => o.phon === phon);
+  if (occ.length !== 1) return { error: occ.length ? `“${word}” tem o som ${PHONEMES[phon].ipa} ${occ.length} vezes; o trem precisa de palavras com o som uma vez só.` : `Pelo som, “${word}” não tem ${PHONEMES[phon].ipa}.` };
+  return { pos: soundPos(word, occ[0].start, occ[0].len) };
+}
+/** Posição do contraste num par (ex.: pote/bote = início; nata/nada = fim). */
+function pairPos(pair) {
+  const { pre } = pairDiff(pair);
+  return soundPos(pair.a.text, pre, 1);
+}
+
+/* ---------- desenhar com o dedo ---------- */
+function drawBoard() {
+  const canvas = h('canvas', { class: 'draw-board', width: 600, height: 600, 'aria-label': 'Quadro para desenhar a letra' });
+  const ctx = canvas.getContext('2d');
+  let drawing = false;
+  let strokes = 0;
+  const clear = () => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 600, 600); strokes = 0; };
+  clear();
+  const pt = e => { const r = canvas.getBoundingClientRect(); return [(e.clientX - r.left) * 600 / r.width, (e.clientY - r.top) * 600 / r.height]; };
+  canvas.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ok */ }
+    drawing = true;
+    strokes++;
+    const [x, y] = pt(e);
+    ctx.lineWidth = 34; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1d2b4f';
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 0.1, y); ctx.stroke();
+  });
+  canvas.addEventListener('pointermove', e => { if (!drawing) return; const [x, y] = pt(e); ctx.lineTo(x, y); ctx.stroke(); });
+  ['pointerup', 'pointercancel'].forEach(ev => canvas.addEventListener(ev, () => { drawing = false; }));
+  return {
+    el: canvas,
+    clear,
+    empty: () => strokes === 0,
+    /** Miniatura em PNG (fica no relatório). */
+    snapshot() { const s = h('canvas', { width: 120, height: 120 }); s.getContext('2d').drawImage(canvas, 0, 0, 120, 120); return s.toDataURL('image/png'); },
+  };
+}
+
+/** Arrastar um elemento até uma de várias áreas (tocar numa área também vale). */
+function dragToZones(el, zones, stage) {
+  return new Promise(resolve => {
+    let st = null;
+    const offs = [];
+    const done = idx => { offs.forEach(f => f()); resolve(idx); };
+    const over = (x, y) => zones.findIndex(z => { const r = z.getBoundingClientRect(); return x > r.left && x < r.right && y > r.top - 20 && y < r.bottom + 20; });
+    const on = (t, ev, fn) => { t.addEventListener(ev, fn); offs.push(() => t.removeEventListener(ev, fn)); };
+    on(el, 'pointerdown', e => {
+      if (stage.dataset.lock) return;
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (_) { /* ok */ }
+      st = { x: e.clientX, y: e.clientY, id: e.pointerId };
+      el.classList.add('dragging');
+    });
+    on(el, 'pointermove', e => {
+      if (!st || e.pointerId !== st.id) return;
+      el.style.transform = `translate(${e.clientX - st.x}px, ${e.clientY - st.y}px) scale(1.08)`;
+      const i = over(e.clientX, e.clientY);
+      zones.forEach((z, k) => z.classList.toggle('drop-hover', k === i));
+    });
+    const up = e => {
+      if (!st || e.pointerId !== st.id) return;
+      st = null;
+      el.classList.remove('dragging');
+      zones.forEach(z => z.classList.remove('drop-hover'));
+      const i = e.type === 'pointerup' ? over(e.clientX, e.clientY) : -1;
+      el.style.transform = '';
+      if (i >= 0) done(i);
+    };
+    on(el, 'pointerup', up);
+    on(el, 'pointercancel', up);
+    zones.forEach((z, i) => on(z, 'click', () => { if (!stage.dataset.lock) done(i); }));
+  });
+}
+
+const slowBtn = onclick => h('button', { class: 'btn-slow', type: 'button', 'aria-label': 'Ouvir devagar', title: 'Ouvir devagar', onclick }, '🐢');
+const SLOW = { rate: 0.75 };
+
+Object.assign(ACTIVITIES, {
+  /* ONDE MORA O SOM?: palavra com os dois sons do par; a criança arrasta cada letra para o seu lugar. */
+  position: {
+    id: 'position',
+    name: 'Onde mora o som?',
+    icon: '📍',
+    step: 5,
+    levels: ['palavras com 2 lugares', 'palavras com até 4 lugares'],
+    desc: 'Posição do fonema e escrita: palavra com os dois sons do par (es_u_o); arrasta T e D para o lugar certo guiada pelo som. Tem “ouvir devagar”.',
+    art: () => '<span class="art-word">es<b>_</b>u<b>_</b>o</span>',
+    check(ctx) {
+      if (!ctx.items.length) return 'Não há palavras de “Onde mora o som?” para os contrastes desta criança (T×D, F×V, K×G ou P×B). Escolha esses pares em “Rodada” ou acrescente palavras em “Listas”.';
+      return null;
+    },
+    items(ctx) {
+      const cs = new Set(ctx.pairs.map(p => p.contrast));
+      return Lists.get('position').filter(i => cs.has(i.contrast) && !checkPositionWord(i.word, i.contrast));
+    },
+    build(ctx, n) {
+      const lvl = ctx.level || 1;
+      let list = ctx.items.filter(i => lvl > 1 || soundSlots(i.word, i.contrast).length === 2);
+      if (!list.length) list = ctx.items;
+      return cycle(list, n).map(item => ({ item }));
+    },
+    async run(trial, g) {
+      const { word, contrast } = trial.item;
+      const slots = soundSlots(word, contrast);
+      const chars = [...word.normalize('NFC')];
+      const graphs = { a: [...new Set(slots.filter(s => s.side === 'a').map(s => s.graph))][0], b: [...new Set(slots.filter(s => s.side === 'b').map(s => s.graph))][0] };
+      const blanks = [];
+      const wordEl = h('div', { class: 'hidden-word pos-word' });
+      for (let i = 0; i < chars.length;) {
+        const s = slots.find(x => x.start === i);
+        if (s) { const b = h('button', { class: 'blank pos-blank', type: 'button', 'aria-label': 'espaço' }, ' '); b.dataset.i = blanks.length; blanks.push(b); wordEl.append(b); i += s.len; } else { wordEl.append(chars[i]); i++; }
+      }
+      const cards = ['a', 'b'].map(side => h('button', { class: 'answer letter-btn pos-card', type: 'button' }, graphs[side]));
+      const check = h('button', { class: 'answer btn-check', type: 'button', disabled: true }, '✔ Conferir');
+      const step = { key: wordKey(word), text: word, el: wordEl };
+      const listen = async fx => { const r = await g.play([{ ...step, fx }]); if (!r.cancelled) g.lock(''); };
+      g.stage.replaceChildren(
+        h('div', { class: 'row center' }, h('div', { class: 'signal', html: SPEAKER_SVG }), slowBtn(() => { if (!g.stage.dataset.lock) listen(SLOW); })),
+        wordEl, h('div', { class: 'word-row2' }, cards), check);
+      const filled = blanks.map(() => null);
+      let active = 0;
+      const paint = () => {
+        blanks.forEach((b, i) => { b.textContent = filled[i] ? graphs[filled[i]] : ' '; b.classList.toggle('full', !!filled[i]); b.classList.toggle('active', i === active); });
+        check.disabled = filled.some(x => !x);
+      };
+      const put = (side, i = active) => {
+        if (i < 0 || i >= blanks.length) return;
+        filled[i] = side;
+        Synth.tap('drum');
+        const nx = filled.findIndex(x => !x);
+        active = nx >= 0 ? nx : i;
+        paint();
+      };
+      blanks.forEach((b, i) => { b.onclick = () => { if (g.stage.dataset.lock) return; if (filled[i]) filled[i] = null; active = i; paint(); }; });
+      // Arrastar a letra até um espaço; tocar na letra preenche o espaço marcado.
+      cards.forEach((card, k) => {
+        const side = k ? 'b' : 'a';
+        let st = null;
+        card.addEventListener('pointerdown', e => {
+          if (g.stage.dataset.lock) return;
+          e.preventDefault();
+          try { card.setPointerCapture(e.pointerId); } catch (_) { /* ok */ }
+          st = { x: e.clientX, y: e.clientY, id: e.pointerId };
+          card.classList.add('dragging');
+        });
+        card.addEventListener('pointermove', e => { if (st && e.pointerId === st.id) card.style.transform = `translate(${e.clientX - st.x}px, ${e.clientY - st.y}px) scale(1.08)`; });
+        const end = e => {
+          if (!st || e.pointerId !== st.id) return;
+          const moved = Math.hypot(e.clientX - st.x, e.clientY - st.y);
+          st = null;
+          card.classList.remove('dragging');
+          card.style.transform = '';
+          if (e.type === 'pointercancel') return;
+          if (moved < 12) { put(side); return; }
+          const i = blanks.findIndex(b => { const r = b.getBoundingClientRect(); return e.clientX > r.left - 14 && e.clientX < r.right + 14 && e.clientY > r.top - 24 && e.clientY < r.bottom + 24; });
+          if (i >= 0) put(side, i);
+        };
+        card.addEventListener('pointerup', end);
+        card.addEventListener('pointercancel', end);
+      });
+      paint();
+      let replays = -1;
+      g.replayBtn.onclick = () => { replays++; listen(); };
+      replays++;
+      listen();
+      await g.choose([[check, true]]);
+      g.endInput([check, ...blanks]);
+      cards.forEach(c => { c.disabled = true; });
+      const res = slots.map((s, i) => ({ pos: s.pos, phon: s.phon, ok: filled[i] === s.side }));
+      const correct = res.every(r => r.ok);
+      blanks.forEach((b, i) => { b.textContent = slots[i].graph; b.classList.remove('active'); b.classList.add(res[i].ok ? 'ok' : 'fixed'); });
+      if (correct) await quickWin(wordEl);
+      else {
+        await sleep(400);
+        await g.play([{ ...step, fx: SLOW }], 'busy');
+        await sleep(1200);
+      }
+      return {
+        pairId: null, contrast, words: word, item: word, itemKey: 'position:' + word,
+        expected: slots.map(s => s.graph).join('-'), answer: filled.map(f => (f ? graphs[f] : '?')).join('-'),
+        correct, slots: res, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* TREM DO SOM: a versão sem letras. Três vagões (início, meio, fim); o bichinho-som vai para o vagão certo. */
+  train: {
+    id: 'train',
+    name: 'Trem do som',
+    icon: '🚂',
+    step: 5,
+    levels: ['som no início', 'som no início ou no fim', 'início, meio ou fim'],
+    desc: 'Posição do fonema sem letras: ouve o som e a palavra e coloca o bichinho-som no vagão do início, do meio ou do fim.',
+    art: () => '<span class="art-train">🚂<i></i><i></i><i></i></span>',
+    check(ctx) { return ctx.items.length ? null : 'Não há palavras do Trem do som para os sons desta criança. Acrescente em “Listas”.'; },
+    items(ctx) {
+      const phs = phonsFor(ctx.pairs);
+      return Lists.get('train').filter(i => phs.includes(i.phon)).map(i => ({ ...i, pos: checkTrainWord(i.word, i.phon).pos })).filter(i => i.pos);
+    },
+    build(ctx, n) {
+      const allowed = [['inicio'], ['inicio', 'fim'], ['inicio', 'meio', 'fim']][(ctx.level || 3) - 1] || ['inicio', 'meio', 'fim'];
+      let list = ctx.items.filter(i => allowed.includes(i.pos));
+      if (!list.length) list = ctx.items;
+      // Posições equilibradas: intercala as palavras de cada posição.
+      const byPos = allowed.map(p => shuffle(list.filter(i => i.pos === p))).filter(l => l.length);
+      const seq = [];
+      for (let k = 0; seq.length < n && k < 200; k++) { const l = byPos[k % byPos.length]; seq.push(l[Math.floor(k / byPos.length) % l.length]); }
+      return seq.map(item => ({ item }));
+    },
+    async run(trial, g) {
+      const { word, emoji, phon, pos } = trial.item;
+      const color = PHONEMES[phon].voiced ? CRITTER_B : CRITTER_A;
+      const buddy = h('button', { class: 'sound-buddy', type: 'button', 'aria-label': 'Ouvir o som', html: critter(color) });
+      const wordCard = h('button', { class: 'fig-card model-card', type: 'button', 'aria-label': 'Ouvir a palavra' }, h('span', { class: 'fig-emoji', 'aria-hidden': 'true' }, emoji || '❓'));
+      const POS = ['inicio', 'meio', 'fim'];
+      const wagons = POS.map(p => h('div', { class: 'wagon', 'data-pos': p }, h('span', { class: 'wheels' })));
+      const train = h('div', { class: 'train' }, h('span', { class: 'loco', 'aria-hidden': 'true' }, '🚂'), wagons);
+      g.stage.replaceChildren(h('div', { class: 'train-top' }, buddy, wordCard, slowBtn(() => { if (!g.stage.dataset.lock) say(SLOW, false); })), train);
+      const say = async (fx = null, withSound = true) => {
+        const steps = [];
+        if (withSound) steps.push({ ...phonItem(phon), el: buddy });
+        steps.push({ key: wordKey(word), text: word, el: wordCard, fx });
+        const r = await g.play(steps, 'listen', 700);
+        if (!r.cancelled) g.lock('');
+      };
+      buddy.onclick = async () => { if (g.stage.dataset.lock) return; const r = await g.play([{ ...phonItem(phon), el: buddy }]); if (!r.cancelled) g.lock(''); };
+      wordCard.onclick = () => { if (!g.stage.dataset.lock) say(null, false); };
+      let replays = -1;
+      g.replayBtn.onclick = () => { replays++; say(); };
+      replays++;
+      say();
+      const idx = await dragToZones(buddy, wagons, g.stage);
+      g.endInput([buddy, wordCard]);
+      const right = POS.indexOf(pos);
+      const correct = idx === right;
+      const ride = i => { buddy.style.transform = ''; wagons[i].append(buddy); buddy.classList.add('riding'); };
+      if (correct) { ride(idx); await celebrate(wagons[idx]); } else {
+        ride(right);
+        wagons[right].classList.add('hint-correct');
+        await sleep(300);
+        await g.play([{ key: wordKey(word), text: word, el: wordCard, fx: SLOW }], 'busy');
+        await sleep(900);
+      }
+      return {
+        pairId: null, contrast: PHON_CONTRAST[phon] || null, phon, pos, words: `${word} (${PHONEMES[phon].ipa})`, item: word,
+        itemKey: `train:${word}:${phon}`, expected: POS_LABEL[pos], answer: POS_LABEL[POS[idx]], correct, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* SOM SECRETO → ESCREVA A LETRA: toca o som; nenhuma letra na tela; a criança desenha a letra. */
+  secret: {
+    id: 'secret',
+    name: 'Som secreto',
+    icon: '✍️',
+    step: 7,
+    levels: ['sons que dá para prolongar (f, v, s, z, ch, j)', 'todos os sons do par'],
+    desc: 'Som → letra sem pista visual: ouve o som sozinho e desenha a letra com o dedo; a letra certa aparece depois e a fono marca ✓ ou ✗ (o desenho fica no relatório).',
+    art: () => miniCards('✍️', '❓'),
+    usesPairs: true,
+    build(ctx, n) {
+      let phs = phonsFor(ctx.pairs);
+      if ((ctx.level || 1) === 1 && phs.some(p => PHONEMES[p].fric)) phs = phs.filter(p => PHONEMES[p].fric);
+      return cycle(phs, n).map(phon => ({ phon }));
+    },
+    async run(trial, g) {
+      const { phon } = trial;
+      const P = PHONEMES[phon];
+      const board = drawBoard();
+      const signal = h('div', { class: 'signal', html: SPEAKER_SVG });
+      const clearBtn = h('button', { class: 'answer claps-undo', type: 'button', 'aria-label': 'Apagar' }, '🧽');
+      const done = h('button', { class: 'answer claps-ok', type: 'button', 'aria-label': 'Pronto' }, '✔️');
+      const side = h('div', { class: 'secret-side' }, clearBtn, done);
+      const area = h('div', { class: 'secret-area' }, board.el, side);
+      g.stage.replaceChildren(signal, area);
+      clearBtn.onclick = () => board.clear();
+      const listen = async () => { const r = await g.play([{ ...phonItem(phon), el: signal }]); if (!r.cancelled) g.lock(''); };
+      let replays = -1;
+      g.replayBtn.onclick = () => { replays++; listen(); };
+      replays++;
+      listen();
+      for (;;) {
+        await g.choose([[done, true]]);
+        if (!board.empty()) break;
+        listen();
+      }
+      g.endInput([done, clearBtn]);
+      board.el.classList.add('frozen');
+      const drawing = board.snapshot();
+      // A letra certa aparece ao lado; a fono confere e marca (botões discretos).
+      const ok = h('button', { class: 'fono-mark ok', type: 'button', 'aria-label': 'Fono: certo' }, '✓');
+      const no = h('button', { class: 'fono-mark no', type: 'button', 'aria-label': 'Fono: errado' }, '✗');
+      side.replaceChildren(h('div', { class: 'secret-letter' }, P.show, P.alt && h('small', null, P.alt)), h('div', { class: 'fono-marks' }, ok, no));
+      g.lock('');
+      g.play([{ ...phonItem(phon), el: signal }], '');
+      const mark = await waitChoice([[ok, true], [no, false]]);
+      ok.onclick = null; no.onclick = null;
+      if (mark) await celebrate(side.firstChild);
+      else await sleep(500);
+      return {
+        pairId: null, contrast: PHON_CONTRAST[phon] || null, phon, words: P.ipa, item: P.ipa, itemKey: 'secret:' + phon,
+        expected: P.show, answer: mark ? P.show : '(outra)', correct: mark, drawing, markedBy: 'fono', replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* VIBRA OU SOPRA?: com a mão na garganta, classifica o som em vozeado (vibra) ou não vozeado (só sopro). */
+  voicing: {
+    id: 'voicing',
+    name: 'Vibra ou sopra?',
+    icon: '🐝',
+    step: 5,
+    levels: ['sons que dá para prolongar', 'todos os sons do par'],
+    desc: 'Traço de sonoridade com pista tátil: mão na garganta, ouve o som e classifica 🐝 vibra (sonora) ou 🌬️ só sopro (surda). No fim, revela a letra de cada som.',
+    art: () => miniCards('🐝', '🌬️'),
+    build(ctx, n) {
+      let phs = phonsFor(ctx.pairs);
+      if ((ctx.level || 1) === 1 && phs.some(p => PHONEMES[p].fric)) phs = phs.filter(p => PHONEMES[p].fric);
+      const voiced = phs.filter(p => PHONEMES[p].voiced);
+      const unv = phs.filter(p => !PHONEMES[p].voiced);
+      const flags = balancedPositions(n, 2);
+      const a = cycle(voiced.length ? voiced : phs, n);
+      const b = cycle(unv.length ? unv : phs, n);
+      return flags.map((f, i) => ({ phon: f ? a[i] : b[i] }));
+    },
+    async run(trial, g) {
+      const { phon } = trial;
+      const P = PHONEMES[phon];
+      const hand = h('div', { class: 'throat', 'aria-hidden': 'true' }, h('span', { class: 'throat-face' }, '🙂'), h('span', { class: 'throat-hand' }, '🖐️'));
+      const signal = h('div', { class: 'signal', html: SPEAKER_SVG });
+      const bee = h('button', { class: 'answer big-pick bee', type: 'button', 'aria-label': 'Vibra' }, '🐝');
+      const wind = h('button', { class: 'answer big-pick wind', type: 'button', 'aria-label': 'Só sopro' }, '🌬️');
+      g.stage.replaceChildren(h('div', { class: 'row center' }, hand, signal), h('div', { class: 'word-row2' }, bee, wind));
+      const listen = async () => { const r = await g.play([{ ...phonItem(phon), el: signal }]); if (!r.cancelled) g.lock(''); };
+      let replays = -1;
+      g.replayBtn.onclick = () => { replays++; listen(); };
+      replays++;
+      listen();
+      const said = await g.choose([[bee, true], [wind, false]]);
+      g.endInput([bee, wind]);
+      const correct = said === P.voiced;
+      const right = P.voiced ? bee : wind;
+      if (correct) await celebrate(right);
+      else await showCorrection(g, [{ ...phonItem(phon), el: right }], right);
+      return {
+        pairId: null, contrast: PHON_CONTRAST[phon] || null, phon, words: P.ipa, item: P.ipa, itemKey: 'voicing:' + phon,
+        expected: P.voiced ? 'vibra' : 'sopro', answer: said ? 'vibra' : 'sopro', correct, replays: Math.max(0, replays),
+      };
+    },
+    /** Revelação no fim da rodada: a letra de cada som que a criança classificou. */
+    async afterRound(g, session) {
+      const seen = [];
+      for (const t of session.trials) if (!seen.find(x => x.phon === t.phon)) seen.push(t);
+      const cards = seen.map(t => {
+        const P = PHONEMES[t.phon];
+        const hits = session.trials.filter(x => x.phon === t.phon);
+        const ok = hits.filter(x => x.correct).length;
+        const c = h('button', { class: 'reveal-card', type: 'button', 'aria-label': 'Ouvir ' + P.ipa },
+          h('span', { class: 'reveal-letter' }, P.show), h('span', { class: 'reveal-icon' }, P.voiced ? '🐝' : '🌬️'),
+          h('span', { class: 'reveal-score' }, ok === hits.length ? '⭐' : `${ok}/${hits.length}`));
+        c.onclick = () => g.play([{ ...phonItem(t.phon), el: c }], '');
+        return c;
+      });
+      const next = h('button', { class: 'claps-ok', type: 'button', 'aria-label': 'Continuar' }, '▶️');
+      g.stage.replaceChildren(h('div', { class: 'reveal-grid' }, cards), next);
+      g.lock('');
+      for (const c of cards) { if (!g.alive()) return; c.classList.add('pop'); await g.play([{ ...phonItem(seen[cards.indexOf(c)].phon), el: c }], ''); await sleep(250); }
+      await waitChoice([[next, true]]);
+    },
+  },
+
+  /* QUAL LETRA FAZ ESSE SOM?: teclado com o alfabeto completo, sem destaque. */
+  letter: {
+    id: 'letter',
+    name: 'Qual letra faz esse som?',
+    icon: '⌨️',
+    step: 7,
+    levels: ['sons que dá para prolongar', 'todos os sons do par'],
+    desc: 'Som → letra, nível mais difícil: ouve o som sozinho e toca a letra num teclado com o alfabeto completo, sem nenhuma letra destacada.',
+    art: () => miniCards('⌨️', '👂'),
+    build(ctx, n) {
+      let phs = phonsFor(ctx.pairs);
+      if ((ctx.level || 1) === 1 && phs.some(p => PHONEMES[p].fric)) phs = phs.filter(p => PHONEMES[p].fric);
+      return cycle(phs, n).map(phon => ({ phon }));
+    },
+    async run(trial, g) {
+      const { phon } = trial;
+      const P = PHONEMES[phon];
+      const signal = h('div', { class: 'signal', html: SPEAKER_SVG });
+      const keys = [...'ABCÇDEFGHIJKLMNOPQRSTUVWXYZ'].map(ch => h('button', { class: 'answer key', type: 'button' }, ch));
+      g.stage.replaceChildren(signal, h('div', { class: 'keyboard' }, keys));
+      const listen = async () => { const r = await g.play([{ ...phonItem(phon), el: signal }]); if (!r.cancelled) g.lock(''); };
+      let replays = -1;
+      g.replayBtn.onclick = () => { replays++; listen(); };
+      replays++;
+      listen();
+      const idx = await g.choose(keys.map((k, i) => [k, i]));
+      g.endInput(keys);
+      const chosen = keys[idx].textContent;
+      const correct = P.letters.includes(chosen);
+      if (correct) await celebrate(keys[idx]);
+      else {
+        keys.filter(k => P.letters.includes(k.textContent)).forEach(k => k.classList.add('hint-correct'));
+        await sleep(300);
+        await g.play([{ ...phonItem(phon), el: signal }], 'busy');
+        await sleep(1200);
+      }
+      return {
+        pairId: null, contrast: PHON_CONTRAST[phon] || null, phon, words: P.ipa, item: P.ipa, itemKey: 'letter:' + phon,
+        expected: P.letters.join('/'), answer: chosen, correct, replays: Math.max(0, replays),
       };
     },
   },
