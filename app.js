@@ -111,7 +111,30 @@ const AGE_GROUPS = {
     startLevels: { same: 2, which: 3, hidden: 2, position: 2, train: 3, voicing: 2, secret: 2, letter: 2, intruder: 2, rhyme: 2, onset: 2 },
   },
 };
-const GROUP_ORDER = ['pequenos', 'detetives'];
+/* Faixa 6–8 anos: a fase da alfabetização, ponte entre ouvir e escrever. */
+AGE_GROUPS.exploradores = {
+  id: 'exploradores',
+  name: 'Exploradores das Letras',
+  ages: '6 a 8 anos',
+  icon: '🧭',
+  theme: 'explorer',        // claro, de caderno: lê um pouco, ainda gosta de figura
+  menu: 'cards',
+  reward: 'stickers',
+  trials: 8,
+  trialOptions: [8, 9, 10],
+  targets: ['pb', 'td', 'fv'],
+  activities: ['familiar', 'train', 'voicing', 'secret', 'hidden', 'position', 'onset'],
+  offByDefault: [],
+  reads: true,
+  startLevels: { train: 2, voicing: 1, secret: 1, hidden: 1, position: 1, onset: 1, same: 2, which: 1, rhyme: 2, letter: 1, claps: 2 },
+};
+const GROUP_ORDER = ['pequenos', 'exploradores', 'detetives'];
+/* Ordem das atividades nas listas (do mais fácil ao mais difícil). A faixa só define o pacote
+ * sugerido (activities) e os níveis iniciais (startLevels): qualquer atividade pode ser liberada
+ * para qualquer criança em Área da fono → Rodada. */
+const ACTIVITY_ORDER = ['familiar', 'sounds', 'memory', 'same', 'which', 'drag', 'rhyme', 'claps', 'onset', 'train', 'voicing', 'position',
+  'secret', 'letter', 'hidden', 'silly', 'dictation', 'intruder', 'noise', 'chopped', 'code', 'speak', 'blitz', 'dichotic'];
+const actIds = () => [...ACTIVITY_ORDER.filter(id => ACTIVITIES[id]), ...Object.keys(ACTIVITIES).filter(id => !ACTIVITY_ORDER.includes(id))];
 const DEFAULT_GROUP = 'pequenos';
 const groupOf = id => AGE_GROUPS[id] || AGE_GROUPS[DEFAULT_GROUP];
 const kidGroup = kid => (kid && AGE_GROUPS[kid.group] ? kid.group : DEFAULT_GROUP);
@@ -346,6 +369,7 @@ Screens.start = {
   },
 };
 function groupArt(G) {
+  if (G.theme === 'explorer') return '<span class="group-emojis">✏️<b>A</b>🔎</span>';
   if (G.theme === 'agent') {
     return '<svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="50" cy="50" r="30" fill="none" stroke="#5ef2d6" stroke-width="9"/>'
       + '<path d="M72 72 L104 104" stroke="#5ef2d6" stroke-width="13" stroke-linecap="round"/>'
@@ -566,7 +590,7 @@ const DETECTIVE_PAIRS = [
   ['fv', 'faca', '🔪', 'vaca', '🐄'], ['fv', 'fila', '', 'vila', '🏘️'], ['fv', 'foto', '📷', 'voto', '🗳️'],
   ['fv', 'fala', '🗣️', 'vala', ''], ['fv', 'feio', '👹', 'veio', ''], ['fv', 'fé', '🙏', 'vê', '👀'],
 ];
-const SEED_VERSION = 3;
+const SEED_VERSION = 4;
 /* Pseudopalavras (fonotática do PB, sem significado): tiram a pista do sentido no nível mais alto. */
 const PSEUDO_PAIRS = [['td', 'tafo', 'dafo'], ['td', 'tobi', 'dobi'], ['kg', 'cupi', 'gupi'], ['fv', 'fapo', 'vapo'], ['fv', 'fema', 'vema'], ['pb', 'pafi', 'bafi']];
 const sameText = (x, y) => x.trim().toLowerCase() === y.trim().toLowerCase();
@@ -603,6 +627,10 @@ const Bank = {
           changed.add(p);
         }
       });
+    }
+    if (ver < 4) {
+      // Faixa nova (6–8 anos): todos os pares que já existem passam a valer para ela também.
+      pairs.forEach(x => { if (!x.groups.includes('exploradores')) { x.groups = [...x.groups, 'exploradores']; changed.add(x); } });
     }
     if (ver < 3) {
       PSEUDO_PAIRS.forEach(([contrast, at, bt], i) => {
@@ -1502,12 +1530,12 @@ async function childActs(childId, gid) { return DB.kv(`acts:${childId}:${gid}`, 
 function packOn(gid, id) {
   const G = groupOf(gid);
   const pack = State.settings.packs[gid] || {};
-  return id in pack ? !!pack[id] : !G.offByDefault.includes(id);
+  if (id in pack) return !!pack[id];
+  return G.activities.includes(id) && !G.offByDefault.includes(id);
 }
 async function activitiesFor(childId, gid) {
-  const G = groupOf(gid);
   const custom = await childActs(childId, gid);
-  return G.activities.filter(id => ACTIVITIES[id])
+  return actIds()
     .filter(id => (custom && id in custom ? custom[id] : packOn(gid, id)))
     .map(id => ACTIVITIES[id]);
 }
@@ -3475,10 +3503,11 @@ const Lists = {
   async reset(k) { this.data[k] = LIST_DEFAULTS[k](); await DB.del('kv', 'list:' + k); },
 };
 /* Leitura das listas no formato que as atividades usam. */
-const rhymeSets = () => Lists.get('rhyme').map(r => ({ model: W(r.model, r.me), match: W(r.match, r.ma), others: [W(r.d1, r.d1e), W(r.d2, r.d2e)] }));
-const onsetSets = () => Lists.get('onset').map(r => ({ contrast: r.contrast, model: W(r.model, r.me), match: W(r.match, r.ma), others: [W(r.d1, r.d1e), W(r.d2, r.d2e)] }));
-const clapWords = () => Lists.get('claps').map(c => [W(c.word, c.emoji), +c.syl || syllables(c.word)]);
-const sentences = () => Lists.get('silly').filter(s => /\{[^}]+\}/.test(s.text));
+const listOk = k => r => !LIST_SCHEMAS[k].check(r);
+const rhymeSets = () => Lists.get('rhyme').filter(listOk('rhyme')).map(r => ({ model: W(r.model, r.me), match: W(r.match, r.ma), others: [W(r.d1, r.d1e), W(r.d2, r.d2e)] }));
+const onsetSets = () => Lists.get('onset').filter(listOk('onset')).map(r => ({ contrast: r.contrast, model: W(r.model, r.me), match: W(r.match, r.ma), others: [W(r.d1, r.d1e), W(r.d2, r.d2e)] }));
+const clapWords = () => Lists.get('claps').filter(listOk('claps')).map(c => [W(c.word, c.emoji), +c.syl || syllables(c.word)]);
+const sentences = () => Lists.get('silly').filter(listOk('silly'));
 InitHooks.push(() => Lists.load());
 
 /* =========================================================================
@@ -4710,13 +4739,13 @@ async function renderRoundTab(el) {
     const setIds = list => { ids.clear(); list.forEach(id => ids.add(id)); save(); draw(); };
 
     /* atividades: pacote padrão da faixa ou escolha individual */
-    const acts = G.activities.filter(id => ACTIVITIES[id]).map(id => ACTIVITIES[id]);
+    const acts = actIds().map(id => ACTIVITIES[id]);
     const usePack = h('input', { type: 'radio', name: 'actmode', checked: !custom });
     const useCustom = h('input', { type: 'radio', name: 'actmode', checked: !!custom });
     const state = {};
     acts.forEach(a => { state[a.id] = custom && a.id in custom ? !!custom[a.id] : packOn(gid, a.id); });
     const saveActs = () => DB.setKv(`acts:${childId}:${gid}`, useCustom.checked ? { ...state } : null);
-    const actRows = acts.map(a => {
+    const actRow = a => {
       const cb = h('input', { type: 'checkbox', checked: state[a.id], disabled: !custom });
       cb.onchange = () => {
         if (!cb.checked && acts.filter(x => state[x.id]).length <= 1) { cb.checked = true; toast('Deixe pelo menos uma atividade ligada.'); return; }
@@ -4727,9 +4756,17 @@ async function renderRoundTab(el) {
         h('label', { class: 'act-check' + (custom ? '' : ' locked') }, cb,
           h('span', { class: 'act-ico', 'aria-hidden': 'true' }, a.icon || '🎲'),
           h('span', { class: 'act-text' }, h('strong', null, a.name), G.offByDefault.includes(a.id) && h('span', { class: 'badge' }, 'opcional'),
+            stepOf(a, 1) && h('span', { class: 'badge step-badge' }, `degrau ${stepOf(a, 1)}` + (a.stepFor && stepOf(a, a.levels.length) !== stepOf(a, 1) ? `–${stepOf(a, a.levels.length)}` : '')),
             h('span', { class: 'muted small' }, a.desc || ''))),
         a.levels && levelControl(childId, a, G));
-    });
+    };
+    const inPack = acts.filter(a => G.activities.includes(a.id));
+    const others = acts.filter(a => !G.activities.includes(a.id));
+    const actRows = [
+      h('h4', { class: 'act-group' }, `Pacote sugerido para ${G.name}`), h('div', { class: 'act-list' }, inPack.map(actRow)),
+      h('details', { class: 'act-more', open: others.some(a => state[a.id]) },
+        h('summary', null, `Outras atividades (${others.length}), de outras faixas`), h('div', { class: 'act-list' }, others.map(actRow))),
+    ];
     usePack.onchange = () => { saveActs(); draw(); };
     useCustom.onchange = () => { saveActs(); draw(); };
 
@@ -4775,7 +4812,7 @@ async function renderRoundTab(el) {
       h('div', { class: 'act-mode' },
         h('label', { class: 'radio' }, usePack, h('span', null, h('strong', null, 'Pacote padrão da faixa'), ' (muda em Ajustes)')),
         h('label', { class: 'radio' }, useCustom, h('span', null, h('strong', null, 'Escolher para esta criança')))),
-      h('div', { class: 'act-list' }, actRows),
+      actRows,
       h('h3', null, 'Escada de dificuldade'),
       h('p', { class: 'muted small' }, `Cada degrau reúne atividades. Sobe com ${LEVEL_UP * 100}% ou mais em 2 rodadas seguidas no degrau; volta com menos de ${LEVEL_DOWN * 100}%. Os níveis de cada atividade (acima) seguem a mesma regra.`),
       await ladderTable(childId, [...new Set(groupPairs.filter(p => ids.has(p.id) && !p.pseudo).map(p => p.contrast))].filter(c => CONTRAST_PHON[c]), gid, draw),
@@ -4790,6 +4827,176 @@ async function renderRoundTab(el) {
     updateCount();
   }
   await draw();
+}
+
+/* ---------- aba "Listas": palavras e frases das atividades, editáveis ---------- */
+FonoTabs.push({ id: 'listas', label: 'Listas', icon: '📝', order: 2.5, render: renderListsTab });
+
+const CONTRAST_OPTS = ['pb', 'td', 'kg', 'fv', 'sz', 'chj'];
+/** Primeiro som da palavra (pelo som, não pela letra), ou null se começar por vogal. */
+function firstSound(word) {
+  const o = scanSounds(word)[0];
+  return o && o.start === 0 ? o.phon : null;
+}
+const wordField = (k, label) => ({ k, label, type: 'text' });
+const emojiField = k => ({ k, label: 'Emoji', type: 'emoji' });
+const LIST_SCHEMAS = {
+  rhyme: {
+    title: 'Qual rima?', icon: '🎵',
+    help: 'Uma palavra-modelo, uma que rima com ela e duas que não rimam. Rima é pelo som do final (anel e chapéu rimam).',
+    fields: [wordField('model', 'Palavra-modelo'), emojiField('me'), wordField('match', 'Rima com o modelo'), emojiField('ma'),
+      wordField('d1', 'Não rima (1)'), emojiField('d1e'), wordField('d2', 'Não rima (2)'), emojiField('d2e')],
+    blank: () => ({ model: '', me: '', match: '', ma: '', d1: '', d1e: '', d2: '', d2e: '' }),
+    summary: r => `${r.me} ${r.model} → ${r.ma} ${r.match}   ·   ${r.d1e} ${r.d1}, ${r.d2e} ${r.d2}`,
+    check: r => (['model', 'match', 'd1', 'd2'].some(k => !r[k].trim()) ? 'Preencha as quatro palavras.' : null),
+  },
+  onset: {
+    title: 'Mesmo começo', icon: '🔤',
+    help: 'Palavra-modelo, uma que começa com o mesmo SOM e duas que não começam. Use um distrator com o par surdo/sonoro (bola × pato).',
+    fields: [{ k: 'contrast', label: 'Contraste', type: 'contrast' }, wordField('model', 'Palavra-modelo'), emojiField('me'),
+      wordField('match', 'Começa com o mesmo som'), emojiField('ma'), wordField('d1', 'Começa diferente (1)'), emojiField('d1e'), wordField('d2', 'Começa diferente (2)'), emojiField('d2e')],
+    blank: () => ({ contrast: 'pb', model: '', me: '', match: '', ma: '', d1: '', d1e: '', d2: '', d2e: '' }),
+    summary: r => `${r.me} ${r.model} = ${r.ma} ${r.match}   ·   ${r.d1e} ${r.d1}, ${r.d2e} ${r.d2}`,
+    check(r) {
+      if (['model', 'match', 'd1', 'd2'].some(k => !r[k].trim())) return 'Preencha as quatro palavras.';
+      const f = firstSound(r.model);
+      if (!f) return 'A palavra-modelo precisa começar com consoante.';
+      if (firstSound(r.match) !== f) return `Pelo som, “${r.match}” não começa como “${r.model}” (${PHONEMES[f] ? PHONEMES[f].ipa : f}).`;
+      const bad = [r.d1, r.d2].find(w => firstSound(w) === f);
+      return bad ? `“${bad}” também começa com ${PHONEMES[f] ? PHONEMES[f].ipa : f}; troque o distrator.` : null;
+    },
+  },
+  claps: {
+    title: 'Bate palminhas', icon: '🥁',
+    help: 'Palavra e número de sílabas (1 a 4). O jogo sugere a contagem; confira (ex.: ti-a são 2).',
+    fields: [wordField('word', 'Palavra'), emojiField('emoji'), { k: 'syl', label: 'Sílabas', type: 'number', min: 1, max: 4 }],
+    blank: () => ({ word: '', emoji: '', syl: 2 }),
+    summary: r => `${r.emoji} ${r.word} · ${r.syl} ${+r.syl === 1 ? 'sílaba' : 'sílabas'}`,
+    check: r => (!r.word.trim() ? 'Escreva a palavra.' : !(+r.syl >= 1 && +r.syl <= 4) ? 'Sílabas: de 1 a 4.' : null),
+    hint: r => (r.word.trim() ? `Contagem automática: ${syllables(r.word)} (confira).` : ''),
+  },
+  silly: {
+    title: 'Frase maluca', icon: '🤪',
+    help: 'Escreva a frase com a palavra TROCADA entre chaves e a palavra certa. Ex.: O menino tomou leite de {faca}. → certa: vaca.',
+    fields: [{ k: 'contrast', label: 'Contraste', type: 'contrast' }, { k: 'text', label: 'Frase (palavra trocada entre { })', type: 'text', wide: true }, wordField('right', 'Palavra certa')],
+    blank: () => ({ id: uid(), contrast: 'td', text: '', right: '' }),
+    summary: r => `${sentenceText(r)}   →   ${r.right}`,
+    check(r) {
+      const m = r.text.match(/\{([^}]+)\}/g);
+      if (!m || m.length !== 1) return 'Marque exatamente uma palavra entre { }.';
+      if (!r.right.trim()) return 'Escreva a palavra certa.';
+      return sameText(sentenceWrong(r), r.right) ? 'A palavra certa precisa ser diferente da trocada.' : null;
+    },
+  },
+  position: {
+    title: 'Onde mora o som?', icon: '📍',
+    help: 'Palavras com OS DOIS sons do par. O jogo confere pelo som: c/g antes de e/i não contam como /k/ /g/; qu e gu contam.',
+    fields: [{ k: 'contrast', label: 'Contraste', type: 'contrast', only: POSITION_CONTRASTS }, wordField('word', 'Palavra')],
+    blank: () => ({ contrast: 'td', word: '' }),
+    summary: r => `${r.word} — ${soundSlots(r.word, r.contrast).map(x => `${x.graph} no ${POS_LABEL[x.pos]}`).join(', ')}`,
+    check: r => (!r.word.trim() ? 'Escreva a palavra.' : checkPositionWord(r.word.trim(), r.contrast)),
+    hint: r => (r.word.trim() && !checkPositionWord(r.word.trim(), r.contrast) ? `Lugares: ${soundSlots(r.word.trim(), r.contrast).map(x => `${x.graph} (${POS_LABEL[x.pos]})`).join(', ')}` : ''),
+  },
+  train: {
+    title: 'Trem do som', icon: '🚂',
+    help: 'Palavra com o som-alvo UMA vez só. O jogo calcula o vagão: início, meio (palavras com 3 sílabas ou mais) ou fim.',
+    fields: [{ k: 'phon', label: 'Som-alvo', type: 'phon' }, wordField('word', 'Palavra'), emojiField('emoji')],
+    blank: () => ({ phon: 't', word: '', emoji: '' }),
+    summary: r => `${r.emoji} ${r.word} — ${PHONEMES[r.phon].ipa} no ${POS_LABEL[checkTrainWord(r.word, r.phon).pos] || '?'}`,
+    check: r => (!r.word.trim() ? 'Escreva a palavra.' : checkTrainWord(r.word.trim(), r.phon).error || null),
+    hint: r => { const x = r.word.trim() && checkTrainWord(r.word.trim(), r.phon); return x && x.pos ? `Vagão: ${POS_LABEL[x.pos]}.` : ''; },
+  },
+};
+let listTabKey = 'position';
+
+async function renderListsTab(el, show) {
+  const seg = h('div', { class: 'seg-group wide list-seg' });
+  const body = h('div');
+  add(el, [
+    h('h2', null, 'Listas das atividades'),
+    h('p', { class: 'muted' }, 'Palavras e frases das atividades. Edite, acrescente ou apague; as mudanças entram no backup. Gravações: em “Gravar palavras”.'),
+    seg,
+    body,
+  ]);
+  const paintSeg = () => seg.replaceChildren(...Object.entries(LIST_SCHEMAS).map(([k, S]) => h('button', {
+    class: 'seg' + (k === listTabKey ? ' on' : ''), type: 'button', onclick: () => { listTabKey = k; paintSeg(); draw(); },
+  }, `${S.icon} ${S.title}`)));
+  async function draw() {
+    const k = listTabKey;
+    const S = LIST_SCHEMAS[k];
+    const items = Lists.get(k).slice();
+    const custom = await Lists.isCustom(k);
+    const save = async () => { await Lists.save(k, items); draw(); };
+    body.replaceChildren(
+      h('div', { class: 'tab-head' },
+        h('h3', null, `${S.icon} ${S.title} (${items.length})`),
+        h('div', { class: 'row wrap' },
+          custom && h('button', {
+            class: 'btn small ghost', type: 'button',
+            onclick: async () => { if (await confirmBox(`Voltar a lista “${S.title}” para a lista inicial do jogo? As suas mudanças nesta lista se perdem.`, { ok: 'Voltar à inicial', danger: true })) { await Lists.reset(k); draw(); } },
+          }, '↩️ Lista inicial'),
+          h('button', { class: 'btn primary small', type: 'button', onclick: () => listItemDialog(k, null, it => { items.push(it); save(); }) }, '➕ Novo'))),
+      h('p', { class: 'muted small' }, S.help),
+      h('div', { class: 'list-items' }, items.map((it, i) => {
+        const err = S.check(it);
+        return h('div', { class: 'list-row' + (err ? ' invalid' : '') },
+          h('span', { class: 'list-sum' }, (it.contrast && CONTRASTS[it.contrast]) ? contrastChip(it.contrast) : '', ' ', S.summary(it), err && h('span', { class: 'warn-text small' }, ' ⚠ ' + err + ' (fica fora do jogo)')),
+          h('button', { class: 'btn small', type: 'button', onclick: () => listItemDialog(k, it, nv => { items[i] = nv; save(); }) }, '✏️'),
+          h('button', {
+            class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar',
+            onclick: async () => { if (await confirmBox('Apagar este item da lista?', { ok: 'Apagar', danger: true })) { items.splice(i, 1); save(); } },
+          }, '🗑️'));
+      })));
+  }
+  paintSeg();
+  await draw();
+}
+
+/** Editor de um item de lista, montado a partir do esquema (com conferência pelo som). */
+function listItemDialog(k, item, onSave) {
+  const S = LIST_SCHEMAS[k];
+  const d = item ? { ...item } : S.blank();
+  const msg = h('p', { class: 'list-msg' });
+  const refresh = () => {
+    const err = S.check(d);
+    msg.className = 'list-msg ' + (err ? 'warn-text' : 'ok-text');
+    msg.textContent = err || ('✔ ' + ((S.hint && S.hint(d)) || 'Tudo certo.'));
+  };
+  const fields = S.fields.map(f => {
+    let input;
+    if (f.type === 'contrast') {
+      input = h('select', { class: 'input' }, (f.only || CONTRAST_OPTS).map(c => h('option', { value: c }, `${CONTRASTS[c].short}  ${CONTRASTS[c].label}`)));
+    } else if (f.type === 'phon') {
+      input = h('select', { class: 'input' }, PHONEME_ORDER.map(p => h('option', { value: p }, `${PHONEMES[p].ipa} (letra ${PHONEMES[p].show})`)));
+    } else if (f.type === 'number') {
+      input = h('input', { class: 'input', type: 'number', min: f.min, max: f.max, inputmode: 'numeric' });
+    } else {
+      input = h('input', { class: 'input' + (f.type === 'emoji' ? ' emoji-input' : ''), type: 'text', autocomplete: 'off', spellcheck: 'false', maxlength: f.wide ? 140 : f.type === 'emoji' ? 16 : 30 });
+    }
+    input.value = d[f.k] == null ? '' : d[f.k];
+    input.oninput = input.onchange = () => { d[f.k] = f.type === 'number' ? +input.value : input.value; if (k === 'claps' && f.k === 'word' && !item) { d.syl = syllables(input.value) || 1; const s = fields.find(x => x.k === 'syl'); if (s) s.input.value = d.syl; } refresh(); };
+    return { k: f.k, input, el: h('label', { class: 'field' + (f.type === 'emoji' ? ' emoji-field' : '') + (f.wide ? ' wide-field' : '') }, h('span', null, f.label), input) };
+  });
+  refresh();
+  const save = () => {
+    S.fields.forEach(f => { if (typeof d[f.k] === 'string') d[f.k] = d[f.k].trim(); });
+    const err = S.check(d);
+    if (err) { toast(err, 5000); return; }
+    if (k === 'silly' && item && item.text !== d.text && Bank.recorded.has('f:' + d.id)) {
+      deleteRecording('f:' + d.id);
+      toast('A gravação desta frase foi apagada porque a frase mudou. Grave de novo.', 5000);
+    }
+    closeOverlay();
+    onSave(d);
+  };
+  openOverlay([
+    h('h2', null, `${S.icon} ${S.title}: ${item ? 'editar' : 'novo'}`),
+    h('div', { class: 'list-form' }, fields.map(f => f.el)),
+    msg,
+    h('div', { class: 'dialog-actions' },
+      h('button', { class: 'btn ghost', type: 'button', onclick: closeOverlay }, 'Cancelar'),
+      h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Salvar')),
+  ], { dismissible: false, cls: 'wide' });
 }
 
 /* ---------- aba "Crianças" ---------- */
@@ -5311,6 +5518,10 @@ async function renderSettingsTab(el) {
     if (p) Sound.sequence([{ pair: p, side: 'a' }, { pair: p, side: 'b' }], s.pauseMs);
   };
 
+  const famCb = h('input', { type: 'checkbox', checked: s.familiarize !== false });
+  famCb.onchange = () => { s.familiarize = famCb.checked; save(); };
+  const famToggle = h('label', { class: 'check' }, famCb, h('span', null, 'Mostrar'));
+
   /* Por faixa: tentativas por rodada e pacote padrão de atividades. */
   const groupBlocks = GROUP_ORDER.map(gid => {
     const G = AGE_GROUPS[gid];
@@ -5320,7 +5531,7 @@ async function renderSettingsTab(el) {
       onclick: () => { s.trialsBy[gid] = n; save(); paintSeg(); },
     }, String(n))));
     paintSeg();
-    const acts = G.activities.filter(id => ACTIVITIES[id]).map(id => ACTIVITIES[id]);
+    const acts = actIds().map(id => ACTIVITIES[id]);
     const checks = acts.map(m => {
       const cb = h('input', { type: 'checkbox', checked: packOn(gid, m.id) });
       cb.onchange = () => {
@@ -5328,7 +5539,7 @@ async function renderSettingsTab(el) {
         s.packs[gid] = { ...(s.packs[gid] || {}), [m.id]: cb.checked };
         save();
       };
-      return h('label', { class: 'check' }, cb, h('span', null, `${m.icon || ''} ${m.name}`, G.offByDefault.includes(m.id) && h('span', { class: 'muted small' }, ' (opcional)')));
+      return h('label', { class: 'check' + (G.activities.includes(m.id) ? '' : ' other-act') }, cb, h('span', null, `${m.icon || ''} ${m.name}`, !G.activities.includes(m.id) && h('span', { class: 'muted small' }, ' (de outra faixa)')));
     });
     return h('section', { class: 'group-settings' },
       h('h3', null, `${G.icon} ${G.name} (${G.ages})`),
@@ -5337,7 +5548,7 @@ async function renderSettingsTab(el) {
         seg),
       h('div', { class: 'setting' },
         h('div', null, h('strong', null, 'Pacote padrão de atividades'),
-          h('p', { class: 'muted small' }, 'Vale para as crianças desta faixa que não têm escolha individual (em Rodada). As desligadas não aparecem para a criança.')),
+          h('p', { class: 'muted small' }, 'Vale para as crianças desta faixa que não têm escolha individual (em Rodada). As desligadas não aparecem para a criança. Atividades de outras faixas também podem entrar.')),
         h('div', { class: 'checks' }, checks)));
   });
 
@@ -5357,6 +5568,10 @@ async function renderSettingsTab(el) {
         h('p', { class: 'muted small' }, 'Volume das palavras e dos sons do jogo (o volume do aparelho também conta).')),
       h('div', { class: 'range-row' }, vol, volOut)),
     h('button', { class: 'btn small', type: 'button', onclick: test }, '🔊 Testar pausa e volume com um par'),
+    h('div', { class: 'setting' },
+      h('div', null, h('strong', null, '“Conheça as palavras” antes de um par novo'),
+        h('p', { class: 'muted small' }, 'Familiarização: antes do primeiro jogo com um par, o jogo mostra cada figura com o áudio, sem pontuação.')),
+      famToggle),
     groupBlocks,
     h('h3', null, 'Sobre os dados'),
     h('p', null, 'Tudo fica guardado só neste aparelho: nada é enviado para a internet. Depois de aberto uma vez, o jogo funciona sem internet.'),

@@ -1567,3 +1567,42 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
   .speak-btn { width: 80px; height: 80px; font-size: 44px; }
   .pair-support > span { width: 60px; height: 60px; }
 }
+
+/* ---------- Exploradores das Letras (6–8 anos): caderno, claro ---------- */
+:root[data-theme="explorer"] {
+  --bg: #f3faf4;
+  --bg-2: #dff1e3;
+  --ink: #1f3b2e;
+  --muted: #5d7468;
+  --line: #cfe5d5;
+  --teal: #19a974;
+  --lime: #2e8b57;
+}
+[data-theme="explorer"] body { background: linear-gradient(rgba(47, 128, 237, .10) 1px, transparent 1px) 0 0 / 100% 34px, var(--bg); }
+[data-theme="explorer"] .game-title { display: inline; font-weight: 800; color: var(--teal); font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[data-theme="explorer"] .mode-card { background: #fff; border-color: var(--line); }
+[data-theme="explorer"] .level-chip { background: #fff; border: 2px solid var(--teal); color: var(--teal); }
+.group-explorer { background: linear-gradient(160deg, #e7f8ec, #fffbe6); border: 3px solid #19a974; color: #1f3b2e; }
+.group-explorer .group-ages { color: #19a974; }
+.group-emojis { font-family: var(--emoji); font-size: clamp(56px, 11vmin, 100px); display: flex; gap: 10px; align-items: center; line-height: 1; }
+.group-emojis b { font-family: var(--font); color: #19a974; font-size: 1.15em; }
+
+/* ---------- área da fono: atividades abertas e listas ---------- */
+.act-group { margin: 10px 0 4px; font-size: 16px; color: var(--muted); }
+.act-more { margin: 10px 0; }
+.act-more > summary { cursor: pointer; font-weight: 700; min-height: 40px; display: flex; align-items: center; color: var(--muted); }
+.step-badge { background: #e8f1ff; color: #2763c4; }
+.other-act { opacity: .8; }
+.list-seg .seg { flex: 1 1 160px; font-size: 15px; }
+.list-items { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.list-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 2px solid var(--line); border-radius: 14px; }
+.list-row.invalid { border-color: #f2c48d; background: #fff8ee; }
+.list-sum { flex: 1; min-width: 0; font-family: var(--emoji), var(--font); }
+.list-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 14px; }
+.list-form .emoji-field { max-width: 160px; }
+.list-form .wide-field { grid-column: 1 / -1; }
+.list-msg { font-weight: 700; min-height: 1.4em; }
+/* arte das missões quando aparecem no menu de cartões (atividades abertas a todas as faixas) */
+.mission-art { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.mission-icon { font-family: var(--emoji); font-size: clamp(46px, 9vmin, 80px); line-height: 1; }
+.mission-tag { font-weight: 800; letter-spacing: 2px; background: #fff; color: #1d2b4f; padding: 4px 12px; border-radius: 10px; box-shadow: var(--shadow-sm); font-size: clamp(15px, 2.6vmin, 22px); }
