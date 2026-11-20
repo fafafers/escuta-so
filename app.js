@@ -11,7 +11,7 @@
  */
 'use strict';
 
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 
 /* =========================================================================
  * 1. NÚCLEO
@@ -109,7 +109,7 @@ const AGE_GROUPS = {
     activities: ['familiar', 'hidden', 'position', 'silly', 'dictation', 'secret', 'voicing', 'letter', 'noise', 'chopped', 'code', 'intruder', 'speak', 'blitz', 'dichotic'],
     offByDefault: ['blitz', 'dichotic', 'speak'],   // a fono liga quando quiser
     reads: true,
-    startLevels: { same: 2, which: 3, hidden: 2, position: 2, train: 3, voicing: 2, secret: 2, letter: 2, intruder: 2, rhyme: 2, onset: 2 },
+    startLevels: { same: 2, which: 3, hidden: 2, position: 3, train: 3, voicing: 2, secret: 2, letter: 2, intruder: 2, rhyme: 2, onset: 2 },
   },
 };
 /* Faixa 6–8 anos: a fase da alfabetização, ponte entre ouvir e escrever. */
@@ -127,7 +127,7 @@ AGE_GROUPS.exploradores = {
   activities: ['familiar', 'train', 'voicing', 'secret', 'hidden', 'position', 'onset'],
   offByDefault: [],
   reads: true,
-  startLevels: { train: 2, voicing: 1, secret: 1, hidden: 1, position: 1, onset: 1, same: 2, which: 1, rhyme: 2, letter: 1, claps: 2 },
+  startLevels: { train: 2, voicing: 1, secret: 1, hidden: 1, position: 2, onset: 1, same: 2, which: 1, rhyme: 2, letter: 1, claps: 2 },
 };
 const GROUP_ORDER = ['pequenos', 'exploradores', 'detetives'];
 /* Ordem das atividades nas listas (do mais fácil ao mais difícil). A faixa só define o pacote
@@ -2837,7 +2837,7 @@ const ADAPT_INFO = {
   noise: { name: 'nível de ruído', detail: l => `relação sinal/ruído ${fmtDb(NOISE_SNR[l])}` },
   filter: { name: 'nível do filtro', detail: l => `passa-baixa ${LOWPASS_HZ[l]} Hz ou ${Math.round(GATE_DUTY[l] * 100)}% cortado` },
   seq: { name: 'tamanho da sequência', detail: l => `${l} itens` },
-  word: { name: 'nível do ditado', detail: l => ['', 'palavras de 2 sílabas, 1 letra-isca', 'todas as palavras, 1 letra-isca', 'todas as palavras, 2 letras-isca'][l] || '' },
+  word: { name: 'nível do ditado', detail: l => ['', 'palavras de 2 sílabas, 1 letra-isca', 'todas as palavras, 1 letra-isca', 'todas as palavras, 2 letras-isca', 'palavras longas (4+ sílabas), letras-isca dos pares'][l] || '' },
 };
 
 /* ---------- palavras escritas ---------- */
@@ -3003,6 +3003,59 @@ async function runIdentify(trial, g, { fx = null, quick = false, extra = {} } = 
 
 const detArt = (icon, label) => `<span class="mission-art"><span class="mission-icon">${icon}</span><span class="mission-tag">${label}</span></span>`;
 
+/** Palavras longas para o ditado (lista de "Onde mora o som?"), dos contrastes da criança. */
+function longWordsFor(pairs) {
+  const cs = new Set(pairs.map(p => p.contrast));
+  const ok = Lists.get('position').filter(i => contrastParts(i.contrast).some(c => cs.has(c)) && !checkPositionWord(i.word, i.contrast));
+  const long = ok.filter(i => syllables(i.word) >= 4);
+  return long.length ? long : ok.filter(i => syllables(i.word) >= 3);
+}
+/** Ditado de palavra longa: monta a palavra inteira com letras móveis; as iscas são as letras dos pares. */
+async function runLongDictation(item, g) {
+  const word = item.word.normalize('NFC');
+  const letters = [...word.toUpperCase()];
+  const sl = soundSlots(word, item.contrast);
+  const decoys = [...new Set(sl.map(x => { const c = PHON_CONTRAST[x.phon]; const q = CONTRAST_PHON[c].find(p => p !== x.phon); return PHONEMES[q].show; }))].slice(0, 3);
+  const tiles = shuffle([...letters, ...decoys]).map(ch => h('button', { class: 'answer tile', type: 'button' }, ch));
+  const slotEls = letters.map(() => h('button', { class: 'slot-letter', type: 'button', 'aria-label': 'espaço' }));
+  const check = h('button', { class: 'answer btn-check', type: 'button', disabled: true }, '✔ Conferir');
+  const step = { key: wordKey(word), text: word };
+  const listen = async fx => { const r = await g.play([{ ...step, fx }]); if (!r.cancelled) g.lock(''); };
+  g.stage.replaceChildren(
+    h('div', { class: 'row center' }, h('div', { class: 'signal', html: SPEAKER_SVG }), slowBtn(() => { if (!g.stage.dataset.lock) listen(SLOW); })),
+    h('div', { class: 'slots long-slots' }, slotEls), h('div', { class: 'tiles' }, tiles), check);
+  const filled = slotEls.map(() => null);
+  const paint = () => { check.disabled = filled.some(x => !x); };
+  const unplace = i => { const t = filled[i]; if (!t) return; t.classList.remove('used'); filled[i] = null; slotEls[i].textContent = ''; slotEls[i].classList.remove('full'); paint(); };
+  const place = (tile, i) => {
+    if (i == null) i = filled.findIndex(x => !x);
+    if (i < 0) return;
+    if (filled[i]) unplace(i);
+    filled[i] = tile; slotEls[i].textContent = tile.textContent; slotEls[i].classList.add('full'); tile.classList.add('used');
+    Synth.tap('drum');
+    paint();
+  };
+  slotEls.forEach((x, i) => { x.onclick = () => { if (!g.stage.dataset.lock) unplace(i); }; });
+  tiles.forEach(tile => { tile.onclick = () => { if (!g.stage.dataset.lock && !tile.classList.contains('used')) place(tile); }; });
+  let replays = 0;
+  g.replayBtn.onclick = () => { replays++; listen(); };
+  listen();
+  await g.choose([[check, true]]);
+  g.endInput([check, ...slotEls]);
+  tiles.forEach(t => { t.disabled = true; t.onclick = null; });
+  const built = filled.map(t => t.textContent).join('');
+  const correct = built === letters.join('');
+  slotEls.forEach((x, i) => { x.textContent = letters[i]; x.classList.add(filled[i].textContent === letters[i] ? 'ok' : 'fixed'); });
+  if (correct) await quickWin(slotEls[0].parentNode);
+  else { await sleep(400); await g.play([{ ...step, fx: SLOW }], 'busy'); await sleep(1400); }
+  const parts = contrastParts(item.contrast);
+  return {
+    pairId: null, contrast: parts.length === 1 ? item.contrast : null, contrasts: parts, words: word, item: word, itemKey: 'dictation:' + word,
+    expected: word, answer: built.toLowerCase(), correct, replays,
+    slots: sl.map(x => ({ pos: x.pos, phon: x.phon, ok: built.slice(x.start, x.start + x.len) === letters.slice(x.start, x.start + x.len).join('') })),
+  };
+}
+
 Object.assign(ACTIVITIES, {
   /* 1. LETRA ESCONDIDA: ouve a palavra e completa a letra que falta (ex.: _aca → F ou V). */
   hidden: {
@@ -3114,13 +3167,17 @@ Object.assign(ACTIVITIES, {
     id: 'dictation',
     name: 'Ditado detetive',
     icon: '🧩',
-    desc: 'Ditado com letras móveis: monta a palavra ouvida; há letras-isca do par trocado. Começa com palavras de 2 sílabas e sobe.',
+    desc: 'Ditado com letras móveis: monta a palavra ouvida; há letras-isca do par trocado. Começa com palavras de 2 sílabas e sobe até palavras longas (apartamento, pontapé), com “ouvir devagar”.',
     art: () => detArt('🧩', 'F A C A'),
     step: 7,
-    adaptive: { kind: 'word', start: 1, min: 1, max: 3, up: 3, down: 2, label: l => `Nível ${l}` },
+    adaptive: { kind: 'word', start: 1, min: 1, max: 4, up: 3, down: 2, label: l => `Nível ${l}` },
     build: (ctx, n) => buildTrials('which', ctx.pairs, n),
     async run(trial, g) {
       const level = g.adapt.level;
+      if (level >= 4) {
+        const long = longWordsFor(g.ctx.pairs);
+        if (long.length) return runLongDictation(long[rand(long.length)], g);
+      }
       // Escolhe a palavra pelo nível: 1 = só palavras de 2 sílabas com até 5 letras.
       let { pair, target } = trial;
       const fits = (p, s) => level > 1 || (syllables(p[s].text) === 2 && [...p[s].text].length <= 5);
@@ -3474,6 +3531,17 @@ Object.assign(ACTIVITIES, {
  * Ficam num formato "plano" (um objeto por linha) para o editor genérico. Sem nada salvo, valem as
  * listas iniciais abaixo. Todas as palavras seguem a fonologia e a ortografia do português brasileiro. */
 const TW = (phon, word, emoji) => ({ phon, word, emoji });
+/* Palavras longas (3 sílabas ou mais) para "Onde mora o som?" e o ditado. "pb+td" = cartas P, B, T e D juntas. */
+const LONG_POSITION_WORDS = [
+  ['td', 'apartamento'], ['td', 'estudante'], ['td', 'dentadura'], ['td', 'atividade'], ['td', 'tempestade'], ['td', 'identidade'], ['td', 'tartaruga'], ['td', 'detetive'],
+  ['pb', 'pontapé'], ['pb', 'problema'], ['pb', 'publicidade'], ['pb', 'barbante'], ['pb', 'bombeiro'], ['pb', 'pipoqueiro'],
+  ['fv', 'fevereiro'], ['fv', 'festival'], ['fv', 'favorável'], ['fv', 'fotografia'],
+  ['kg', 'caranguejo'], ['kg', 'agricultor'], ['kg', 'escorregador'], ['kg', 'gangorra'],
+  ['pb+td', 'pontapé'], ['pb+td', 'apartamento'], ['pb+td', 'tempestade'], ['pb+td', 'depósito'], ['pb+td', 'batida'], ['pb+td', 'pedido'], ['pb+td', 'bandido'], ['pb+td', 'tapete'],
+  ['fv+td', 'vestido'], ['fv+td', 'divertido'], ['fv+td', 'televisão'], ['fv+td', 'favorito'],
+  ['kg+td', 'tartaruga'], ['kg+td', 'cadeado'], ['kg+td', 'computador'], ['kg+td', 'escorregador'],
+  ['kg+pb+td', 'abacate'], ['kg+pb+td', 'goiabada'], ['kg+pb+td', 'computador'],
+];
 const LIST_DEFAULTS = {
   rhyme: () => RHYME_SETS.map(s => ({ model: s.model.text, me: s.model.emoji, match: s.match.text, ma: s.match.emoji, d1: s.others[0].text, d1e: s.others[0].emoji, d2: s.others[1].text, d2e: s.others[1].emoji })),
   onset: () => ONSET_SETS.map(s => ({ contrast: s.contrast, model: s.model.text, me: s.model.emoji, match: s.match.text, ma: s.match.emoji, d1: s.others[0].text, d1e: s.others[0].emoji, d2: s.others[1].text, d2e: s.others[1].emoji })),
@@ -3484,6 +3552,7 @@ const LIST_DEFAULTS = {
     ...['favor', 'fivela', 'favela', 'ferver', 'fervura', 'fava', 'festivo', 'favorito'].map(word => ({ contrast: 'fv', word })),
     ...['carga', 'cargo', 'colega', 'coringa', 'cogumelo', 'escorrega', 'cangaço'].map(word => ({ contrast: 'kg', word })),
     ...['pombo', 'bispo', 'pobre'].map(word => ({ contrast: 'pb', word })),
+    ...LONG_POSITION_WORDS.map(([contrast, word]) => ({ contrast, word })),
   ],
   train: () => [
     TW('d', 'dente', '🦷'), TW('d', 'doce', '🍬'), TW('d', 'medalha', '🏅'), TW('d', 'cadeira', '🪑'), TW('d', 'nada', '🏊'), TW('d', 'sede', '🥤'), TW('d', 'bode', '🐐'),
@@ -3495,17 +3564,28 @@ const LIST_DEFAULTS = {
     TW('p', 'panela', '🍲'), TW('p', 'pato', '🦆'), TW('p', 'sapato', '👞'), TW('p', 'lápis', '✏️'), TW('p', 'sapo', '🐸'),
     TW('b', 'bola', '⚽'), TW('b', 'bota', '👢'), TW('b', 'cabelo', '💇'), TW('b', 'abelha', '🐝'), TW('b', 'cabra', '🐐'), TW('b', 'lobo', '🐺'),
     TW('s', 'sapo', '🐸'), TW('s', 'sol', '☀️'), TW('s', 'pássaro', '🐦'), TW('z', 'zebra', '🦓'), TW('z', 'vizinho', '🏘️'), TW('z', 'mesa', '🪑'), TW('z', 'rosa', '🌹'),
+    TW('p', 'apartamento', '🏢'), TW('b', 'abacaxi', '🍍'), TW('k', 'bicicleta', '🚲'), TW('k', 'abacaxi', '🍍'), TW('t', 'chocolate', '🍫'),
+    TW('v', 'televisão', '📺'), TW('g', 'tartaruga', '🐢'), TW('d', 'dinossauro', '🦕'), TW('z', 'presente', '🎁'),
     TW('x', 'chave', '🔑'), TW('x', 'machado', '🪓'), TW('x', 'peixe', '🐟'), TW('x', 'bicho', '🐛'),
     TW('j', 'janela', '🪟'), TW('j', 'jacaré', '🐊'), TW('j', 'tijolo', '🧱'), TW('j', 'laranja', '🍊'),
   ],
 };
+const LIST_DEFAULTS_VERSION = 2;   // 2: palavras longas em "Onde mora o som?" e no "Trem do som"
 const Lists = {
   data: {},
   async load() {
+    const ver = await DB.kv('listDefaultsVersion', 1);
     for (const k of Object.keys(LIST_DEFAULTS)) {
       const saved = await DB.kv('list:' + k, null);
       this.data[k] = Array.isArray(saved) ? saved : LIST_DEFAULTS[k]();
+      // Lista já editada pela fono: acrescenta só as palavras novas da lista inicial (nada é apagado).
+      if (Array.isArray(saved) && ver < LIST_DEFAULTS_VERSION && (k === 'position' || k === 'train')) {
+        const same = (x, y) => x.word === y.word && x.contrast === y.contrast && x.phon === y.phon;
+        const add = LIST_DEFAULTS[k]().filter(d => !saved.some(x => same(x, d)));
+        if (add.length) { this.data[k] = saved.concat(add); await DB.setKv('list:' + k, this.data[k]); }
+      }
     }
+    if (ver < LIST_DEFAULTS_VERSION) await DB.setKv('listDefaultsVersion', LIST_DEFAULTS_VERSION);
   },
   get(k) { return this.data[k] || (this.data[k] = LIST_DEFAULTS[k]()); },
   isCustom: k => DB.kv('list:' + k, null).then(v => Array.isArray(v)),
@@ -3595,30 +3675,49 @@ function scanSounds(word) {
 function soundPos(word, start, len) {
   const c = normChars(word);
   if (!c.slice(0, start).some(ch => VOWELS.includes(ch))) return 'inicio';
+  // Fim = o som está na última sílaba (conta o hiato final: fo-to-gra-FI-a → meio).
   const rest = c.slice(start + len).join('');
-  const groups = (rest.match(/[aeiou]+/g) || []).length;
-  return groups <= 1 ? 'fim' : 'meio';
+  return syllables(rest) <= 1 ? 'fim' : 'meio';
 }
 const POS_LABEL = { inicio: 'início', meio: 'meio', fim: 'fim' };
-/** Espaços de "Onde mora o som?": cada ocorrência dos dois sons do contraste. */
+/* "Onde mora o som?" aceita um contraste (td) ou vários juntos (pb+td: cartas P, B, T, D). */
+const POSITION_BASE = ['td', 'fv', 'kg', 'pb'];
+const POSITION_CONTRASTS = [...POSITION_BASE, 'pb+td', 'fv+td', 'kg+td', 'kg+pb', 'fv+pb', 'fv+kg', 'kg+pb+td'];
+const contrastParts = c => String(c || '').split('+');
+const phonsOf = c => contrastParts(c).flatMap(x => CONTRAST_PHON[x] || []);
+const contrastName = c => contrastParts(c).map(x => (CONTRASTS[x] || CONTRASTS.outro).short).join(' + ');
+/** Espaços de "Onde mora o som?": cada lugar da palavra com um dos sons do(s) contraste(s). side = fonema. */
 function soundSlots(word, contrast) {
-  const ph = CONTRAST_PHON[contrast];
-  if (!ph) return [];
+  const ph = phonsOf(contrast);
+  if (!ph.length) return [];
   const chars = [...word.normalize('NFC')];
   return scanSounds(word).filter(o => ph.includes(o.phon)).map(o => ({
-    ...o, side: o.phon === ph[0] ? 'a' : 'b', pos: soundPos(word, o.start, o.len),
+    ...o, side: o.phon, pos: soundPos(word, o.start, o.len),
     graph: chars.slice(o.start, o.start + o.len).join('').toUpperCase(),
   }));
 }
-const POSITION_CONTRASTS = ['td', 'fv', 'kg', 'pb'];
-/** Valida uma palavra de "Onde mora o som?". Devolve a mensagem de erro ou null. */
+/** Valida uma palavra de "Onde mora o som?". Devolve a mensagem de erro ou null.
+ *  Precisa de pelo menos 2 lugares; pode ter um só dos sons (a_ar_amen_o: só /t/) ou os dois (es_u_o). */
 function checkPositionWord(word, contrast) {
-  if (!POSITION_CONTRASTS.includes(contrast)) return 'Use T×D, F×V, K×G ou P×B (S×Z e CH×J têm letras ambíguas demais).';
+  const parts = contrastParts(contrast);
+  if (!parts.every(x => POSITION_BASE.includes(x))) return 'Use T×D, F×V, K×G, P×B ou uma mistura deles (S×Z e CH×J têm letras ambíguas demais).';
   const s = soundSlots(word, contrast);
-  const [pa, pb] = CONTRAST_PHON[contrast].map(p => PHONEMES[p].ipa);
-  if (!s.some(x => x.side === 'a') || !s.some(x => x.side === 'b')) return `Pelo som, “${word}” precisa ter ${pa} e ${pb}. Lembre: c/g antes de e/i não é /k/ /g/.`;
-  if (s.length > 4) return 'Palavra com lugares demais (máximo 4).';
+  if (s.length < 2) return `Pelo som, “${word}” precisa ter pelo menos 2 lugares com ${contrastName(contrast)}. Lembre: c/g antes de e/i não é /k/ /g/.`;
+  if (parts.length > 1) {
+    const miss = parts.find(x => !s.some(o => CONTRAST_PHON[x].includes(o.phon)));
+    if (miss) return `Para misturar ${contrastName(contrast)}, a palavra precisa ter algum som de ${CONTRASTS[miss].short}.`;
+  }
+  if (s.length > 7) return 'Palavra com lugares demais (máximo 7).';
   return null;
+}
+/** Nível da palavra em "Onde mora o som?": 1 curta com 2 lugares; 2 mais longa (3+ sílabas, até 4 lugares);
+ *  3 longa (4+ sílabas) ou com contrastes misturados. */
+function positionTier(item) {
+  const n = soundSlots(item.word, item.contrast).length;
+  const syl = syllables(item.word);
+  if (contrastParts(item.contrast).length > 1 || syl >= 4 || n > 4) return 3;
+  if (syl >= 3 || n > 2) return 2;
+  return 1;
 }
 /** Valida uma palavra do "Trem do som": o som-alvo aparece uma vez só. Devolve { pos } ou { error }. */
 function checkTrainWord(word, phon) {
@@ -3707,8 +3806,8 @@ Object.assign(ACTIVITIES, {
     name: 'Onde mora o som?',
     icon: '📍',
     step: 5,
-    levels: ['palavras com 2 lugares', 'palavras com até 4 lugares'],
-    desc: 'Posição do fonema e escrita: palavra com os dois sons do par (es_u_o); arrasta T e D para o lugar certo guiada pelo som. Tem “ouvir devagar”.',
+    levels: ['palavras curtas, 2 lugares', 'palavras de 3 sílabas ou mais', 'palavras longas (pontapé, apartamento) e contrastes misturados'],
+    desc: 'Posição do fonema e escrita: a palavra aparece com os lugares do som vazios (es_u_o, a_ar_amen_o) e a criança arrasta cada letra (T ou D; nas difíceis P, B, T e D) para o lugar certo, guiada pelo som. Tem “ouvir devagar”.',
     art: () => '<span class="art-word">es<b>_</b>u<b>_</b>o</span>',
     check(ctx) {
       if (!ctx.items.length) return 'Não há palavras de “Onde mora o som?” para os contrastes desta criança (T×D, F×V, K×G ou P×B). Escolha esses pares em “Rodada” ou acrescente palavras em “Listas”.';
@@ -3716,11 +3815,13 @@ Object.assign(ACTIVITIES, {
     },
     items(ctx) {
       const cs = new Set(ctx.pairs.map(p => p.contrast));
-      return Lists.get('position').filter(i => cs.has(i.contrast) && !checkPositionWord(i.word, i.contrast));
+      return Lists.get('position').filter(i => contrastParts(i.contrast).some(c => cs.has(c)) && !checkPositionWord(i.word, i.contrast));
     },
     build(ctx, n) {
       const lvl = ctx.level || 1;
-      let list = ctx.items.filter(i => lvl > 1 || soundSlots(i.word, i.contrast).length === 2);
+      // Cada nível usa as palavras do seu nível; se faltar, completa com as do nível mais próximo.
+      let list = ctx.items.filter(i => positionTier(i) === lvl);
+      for (let d = 1; list.length < 4 && d < 3; d++) list = list.concat(ctx.items.filter(i => Math.abs(positionTier(i) - lvl) === d));
       if (!list.length) list = ctx.items;
       return cycle(list, n).map(item => ({ item }));
     },
@@ -3728,14 +3829,17 @@ Object.assign(ACTIVITIES, {
       const { word, contrast } = trial.item;
       const slots = soundSlots(word, contrast);
       const chars = [...word.normalize('NFC')];
-      const graphs = { a: [...new Set(slots.filter(s => s.side === 'a').map(s => s.graph))][0], b: [...new Set(slots.filter(s => s.side === 'b').map(s => s.graph))][0] };
+      // Uma carta por som do(s) contraste(s): a letra que a palavra usa (C ou QU…) ou a letra padrão.
+      const phs = phonsOf(contrast);
+      const graphs = Object.fromEntries(phs.map(ph => [ph, (slots.find(x => x.phon === ph) || {}).graph || PHONEMES[ph].show]));
       const blanks = [];
-      const wordEl = h('div', { class: 'hidden-word pos-word' });
+      const wordEl = h('div', { class: 'hidden-word pos-word' + (chars.length > 8 ? ' long' : '') });
+      wordEl.style.fontSize = `min(clamp(44px, 11vmin, 104px), ${(150 / (chars.length + 2)).toFixed(1)}vw)`;
       for (let i = 0; i < chars.length;) {
         const s = slots.find(x => x.start === i);
         if (s) { const b = h('button', { class: 'blank pos-blank', type: 'button', 'aria-label': 'espaço' }, ' '); b.dataset.i = blanks.length; blanks.push(b); wordEl.append(b); i += s.len; } else { wordEl.append(chars[i]); i++; }
       }
-      const cards = ['a', 'b'].map(side => h('button', { class: 'answer letter-btn pos-card', type: 'button' }, graphs[side]));
+      const cards = phs.map(ph => h('button', { class: 'answer letter-btn pos-card', type: 'button' }, graphs[ph]));
       const check = h('button', { class: 'answer btn-check', type: 'button', disabled: true }, '✔ Conferir');
       const step = { key: wordKey(word), text: word, el: wordEl };
       const listen = async fx => { const r = await g.play([{ ...step, fx }]); if (!r.cancelled) g.lock(''); };
@@ -3759,7 +3863,7 @@ Object.assign(ACTIVITIES, {
       blanks.forEach((b, i) => { b.onclick = () => { if (g.stage.dataset.lock) return; if (filled[i]) filled[i] = null; active = i; paint(); }; });
       // Arrastar a letra até um espaço; tocar na letra preenche o espaço marcado.
       cards.forEach((card, k) => {
-        const side = k ? 'b' : 'a';
+        const side = phs[k];
         let st = null;
         card.addEventListener('pointerdown', e => {
           if (g.stage.dataset.lock) return;
@@ -3801,7 +3905,7 @@ Object.assign(ACTIVITIES, {
         await sleep(1200);
       }
       return {
-        pairId: null, contrast, words: word, item: word, itemKey: 'position:' + word,
+        pairId: null, contrast: contrastParts(contrast).length === 1 ? contrast : null, contrasts: contrastParts(contrast), words: word, item: word, itemKey: 'position:' + word,
         expected: slots.map(s => s.graph).join('-'), answer: filled.map(f => (f ? graphs[f] : '?')).join('-'),
         correct, slots: res, replays: Math.max(0, replays),
       };
@@ -5041,12 +5145,12 @@ const LIST_SCHEMAS = {
   },
   position: {
     title: 'Onde mora o som?', icon: '📍',
-    help: 'Palavras com OS DOIS sons do par. O jogo confere pelo som: c/g antes de e/i não contam como /k/ /g/; qu e gu contam.',
+    help: 'Palavras com pelo menos 2 lugares do som (um ou os dois sons do par). Para ficar mais difícil, use palavras longas (pontapé, apartamento) ou misture contrastes (P×B + T×D: a criança escolhe entre P, B, T e D). O jogo confere pelo som: c/g antes de e/i não contam como /k/ /g/; qu e gu contam.',
     fields: [{ k: 'contrast', label: 'Contraste', type: 'contrast', only: POSITION_CONTRASTS }, wordField('word', 'Palavra')],
     blank: () => ({ contrast: 'td', word: '' }),
-    summary: r => `${r.word} — ${soundSlots(r.word, r.contrast).map(x => `${x.graph} no ${POS_LABEL[x.pos]}`).join(', ')}`,
+    summary: r => `${r.word} — ${soundSlots(r.word, r.contrast).map(x => `${x.graph} no ${POS_LABEL[x.pos]}`).join(', ')} · nível ${positionTier(r)}`,
     check: r => (!r.word.trim() ? 'Escreva a palavra.' : checkPositionWord(r.word.trim(), r.contrast)),
-    hint: r => (r.word.trim() && !checkPositionWord(r.word.trim(), r.contrast) ? `Lugares: ${soundSlots(r.word.trim(), r.contrast).map(x => `${x.graph} (${POS_LABEL[x.pos]})`).join(', ')}` : ''),
+    hint: r => (r.word.trim() && !checkPositionWord(r.word.trim(), r.contrast) ? `Lugares: ${soundSlots(r.word.trim(), r.contrast).map(x => `${x.graph} (${POS_LABEL[x.pos]})`).join(', ')} · entra no nível ${positionTier({ ...r, word: r.word.trim() })}` : ''),
   },
   train: {
     title: 'Trem do som', icon: '🚂',
@@ -5091,7 +5195,7 @@ async function renderListsTab(el, show) {
       h('div', { class: 'list-items' }, items.map((it, i) => {
         const err = S.check(it);
         return h('div', { class: 'list-row' + (err ? ' invalid' : '') },
-          h('span', { class: 'list-sum' }, (it.contrast && CONTRASTS[it.contrast]) ? contrastChip(it.contrast) : '', ' ', S.summary(it), err && h('span', { class: 'warn-text small' }, ' ⚠ ' + err + ' (fica fora do jogo)')),
+          h('span', { class: 'list-sum' }, it.contrast ? contrastParts(it.contrast).filter(c => CONTRASTS[c]).map(contrastChip) : '', ' ', S.summary(it), err && h('span', { class: 'warn-text small' }, ' ⚠ ' + err + ' (fica fora do jogo)')),
           h('button', { class: 'btn small', type: 'button', onclick: () => listItemDialog(k, it, nv => { items[i] = nv; save(); }) }, '✏️'),
           h('button', {
             class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar',
@@ -5116,7 +5220,7 @@ function listItemDialog(k, item, onSave) {
   const fields = S.fields.map(f => {
     let input;
     if (f.type === 'contrast') {
-      input = h('select', { class: 'input' }, (f.only || CONTRAST_OPTS).map(c => h('option', { value: c }, `${CONTRASTS[c].short}  ${CONTRASTS[c].label}`)));
+      input = h('select', { class: 'input' }, (f.only || CONTRAST_OPTS).map(c => h('option', { value: c }, CONTRASTS[c] ? `${CONTRASTS[c].short}  ${CONTRASTS[c].label}` : `${contrastName(c)} (misturados)`)));
     } else if (f.type === 'phon') {
       input = h('select', { class: 'input' }, PHONEME_ORDER.map(p => h('option', { value: p }, `${PHONEMES[p].ipa} (letra ${PHONEMES[p].show})`)));
     } else if (f.type === 'number') {
@@ -5314,7 +5418,7 @@ const POS_COLORS = { inicio: '#2a9d8f', meio: '#e9a23b', fim: '#8e6cd1' };
 function posEntries(trials) {
   const out = [];
   for (const t of trials) {
-    if (t.slots) t.slots.forEach(sl => out.push({ pos: sl.pos, correct: sl.ok, contrast: t.contrast }));
+    if (t.slots) t.slots.forEach(sl => out.push({ pos: sl.pos, correct: sl.ok, contrast: PHON_CONTRAST[sl.phon] || t.contrast }));
     else if (t.pos) out.push({ pos: t.pos, correct: t.correct, contrast: t.contrast });
     else if (t.pairId && Bank.get(t.pairId)) out.push({ pos: pairPos(Bank.get(t.pairId)), correct: t.correct, contrast: t.contrast });   // sessões antigas
   }

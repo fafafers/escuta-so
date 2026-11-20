@@ -1626,3 +1626,10 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
 .drawing.no { border-color: #f2c48d; }
 .drawing img { width: 100%; max-width: 120px; border-radius: 8px; background: #fff; }
 .drawing figcaption { font-size: 14px; font-weight: 700; }
+
+/* palavras longas em "Onde mora o som?" e no ditado */
+.pos-word.long { letter-spacing: 2px; gap: 2px; flex-wrap: nowrap; }
+.pos-word.long .pos-blank { min-width: 1em; padding: 0 3px; border-width: 3px; }
+.long-slots { gap: 6px; max-width: 96vw; }
+.long-slots .slot-letter { width: clamp(40px, 7vmin, 66px); height: clamp(50px, 9vmin, 80px); font-size: clamp(26px, 5vmin, 44px); }
+@media (max-width: 560px) { .long-slots .slot-letter { width: 8vw; height: 11vw; font-size: 6vw; border-width: 2px; } }

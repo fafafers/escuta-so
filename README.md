@@ -54,7 +54,8 @@ O jogo **confere pelo SOM, não pela letra**:
 - c/g antes de e/i não são /k/ /g/ (*cegonha* e *tigela* são recusadas para K×G);
 - qu e gu contam como /k/ e /g/;
 - no Trem do som, a palavra precisa ter o som **uma vez só** (*dado* não serve);
-- no Mesmo começo, o primeiro som precisa bater.
+- no Mesmo começo, o primeiro som precisa bater;
+- em Onde mora o som, a palavra precisa ter pelo menos 2 lugares do som (pode ser um só dos sons, como *apartamento* em T×D). Dá para **misturar contrastes** (P×B + T×D) para deixar mais difícil, e a lista mostra em que nível cada palavra entra.
 
 Um item que não passa na conferência fica fora do jogo, com um aviso na lista. As listas entram no backup.
 
@@ -140,7 +141,7 @@ Na tela inicial, toque na **faixa** (isso também libera o som). A criança toca
 | 🥁 **Bate palminhas** | Consciência silábica (1 a 4 sílabas). |
 | 🔤 **Mesmo começo** | Fonema inicial, com um distrator do par surdo/sonoro. Quem já lê vê as palavras escritas. |
 | 🚂 **Trem do som** | Posição do fonema **sem letras**: põe o bichinho-som no vagão do início, do meio ou do fim. |
-| 📍 **Onde mora o som?** | Posição do fonema **com letras**: arrasta T e D (F e V, C e G, P e B) para os espaços da palavra (es_u_o). |
+| 📍 **Onde mora o som?** | Posição do fonema **com letras**: arrasta cada letra para o seu lugar na palavra. Nível 1: palavras curtas (es_u_o). Nível 2: 3 sílabas ou mais. Nível 3: **palavras longas** (*a_ar_amen_o*, *_on_a_é*) e **contrastes misturados**, com as cartas P, B, T e D juntas. |
 
 **Som → letra (sem pista visual)**
 
@@ -156,7 +157,7 @@ Na tela inicial, toque na **faixa** (isso também libera o som). A criança toca
 |---|---|
 | 🔡 **Letra escondida** | Completa a letra que falta (_aca → F ou V), com ou sem figura. |
 | 🤪 **Frase maluca** | Compreensão: acha a palavra trocada na frase e corrige. |
-| 🧩 **Ditado detetive** | Ditado com letras móveis e letras-isca do par trocado. |
+| 🧩 **Ditado detetive** | Ditado com letras móveis e letras-isca do par trocado; no **nível 4** monta palavras longas inteiras (apartamento, tempestade), com “ouvir devagar”. |
 | 🎧 **Ruído na escuta** | Figura-fundo com ruído de fundo (sobe e desce sozinho). |
 | ✂️ **Som picotado** | Fechamento auditivo (som abafado ou com cortes). |
 | 🔐 **Código secreto** | Ordenação temporal de sílabas (3 a 5). |
