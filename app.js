@@ -1116,86 +1116,159 @@ function micError(e) {
   }
 }
 
-/* ---------- aba "Gravar palavras" ---------- */
+/* ---------- aba "Gravar palavras": organizada por faixa e por par ---------- */
 FonoTabs.push({ id: 'gravar', label: 'Gravar palavras', icon: '🎙️', order: 2, render: renderRecordTab });
+let recGroup = null;
+
+/** O que pode ser gravado em cada faixa, em seções. count: entra no contador "faltam gravar". */
+function recordSections(gid) {
+  const out = [];
+  const pairs = Bank.inGroup(gid);
+  out.push({ id: 'pairs', title: 'Pares surdo × sonoro', count: true, pairs });
+  if (gid === 'pequenos') {
+    const word = w => ({ key: wordKey(w.text), text: w.text, fig: wordFig(w) });
+    out.push({ id: 'rhyme', title: 'Palavras do “Qual rima?”', count: true, items: ACTIVITY_WORDS.rhyme().map(word) });
+    out.push({ id: 'onset', title: 'Palavras do “Mesmo começo”', count: true, items: ACTIVITY_WORDS.onset().map(word) });
+    out.push({ id: 'claps', title: 'Palavras do “Bate palminhas”', count: true, items: ACTIVITY_WORDS.claps().map(word) });
+    out.push({
+      id: 'sounds', title: 'Sons do “Que som é esse?” e do “O bicho sumiu”', count: false,
+      note: 'Opcional: os sons já vêm prontos (sintetizados). Grave por cima se quiser usar sons de verdade; apagando a gravação, volta o som pronto.',
+      items: Object.entries(SOUNDS).map(([id, s]) => ({ key: 'snd:' + id, text: s.name, synth: id, fig: h('span', { class: 'fig-emoji' }, s.emoji), maxMs: 4000 })),
+    });
+  } else {
+    const cs = CONTRAST_ORDER.filter(c => SYLLABLES[c] && pairs.some(p => p.contrast === c));
+    out.push({
+      id: 'syl', title: 'Sílabas do “Código secreto”', count: true,
+      items: cs.flatMap(c => SYLLABLES[c].map((s, i) => ({ key: 's:' + s[0], text: s[0], sub: CONTRASTS[c].short, fig: h('span', { class: 'syl-fig' }, s[0].toUpperCase()), tts: s[1] }))),
+    });
+    out.push({
+      id: 'sent', title: 'Frases da “Frase maluca”', count: false,
+      note: 'Opcional: grave a frase inteira, já com a palavra trocada. Sem gravação, o jogo junta as suas gravações das palavras e usa a voz sintética só no que faltar.',
+      items: SENTENCES.map(s => ({ key: 'f:' + s.id, text: sentenceText(s), sub: CONTRASTS[s.contrast].short + ' · trocada: ' + sentenceWrong(s), sentence: s, maxMs: 8000 })),
+    });
+  }
+  return out;
+}
+const sectionKeys = sec => (sec.pairs ? sec.pairs.flatMap(p => [p.id + ':a', p.id + ':b']) : sec.items.map(i => i.key));
 
 async function renderRecordTab(el) {
   let leaving = false;
   let active = null;            // gravação em andamento: { key, stop }
   onLeave(() => { leaving = true; if (active) active.stop(); });
   const canRecord = Recorder.supported();
+  if (!AGE_GROUPS[recGroup]) recGroup = State.group;
+  const seg = h('div', { class: 'seg-group wide', role: 'tablist' });
   const summary = h('div', { class: 'rec-summary' });
   const list = h('div', { class: 'pair-list' });
+  let sections = [];
 
   add(el, [
     h('div', { class: 'tab-head' },
       h('h2', null, 'Gravar palavras'),
-      h('button', { class: 'btn primary', type: 'button', onclick: () => editPairDialog(null, draw) }, '➕ Novo par')),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => editPairDialog(null, draw, recGroup) }, '➕ Novo par')),
+    seg,
     summary,
     !canRecord && h('div', { class: 'banner warn' }, 'Este navegador não permite gravar áudio. No iPad use o Safari e no Android use o Chrome, ambos atualizados.'),
     h('details', { class: 'tips' },
       h('summary', null, 'Dicas para gravar'),
       h('ul', null,
         h('li', null, 'Grave num lugar silencioso, com o tablet a uns 20 cm da boca.'),
-        h('li', null, 'Toque em Gravar, diga a palavra e toque em Parar (a gravação para sozinha depois de 4 segundos).'),
-        h('li', null, 'O silêncio do começo e do fim é cortado automaticamente e o volume das palavras é igualado.'),
+        h('li', null, 'Toque em Gravar, diga a palavra e toque em Parar (a gravação para sozinha depois de 4 segundos; frases, depois de 8).'),
+        h('li', null, 'O silêncio do começo e do fim é cortado automaticamente e o volume é igualado.'),
         h('li', null, 'Grave as duas palavras de um par em seguida, com a mesma entonação e intensidade, para que a única diferença seja o vozeamento.'),
-        h('li', null, 'Depois de gravar, a palavra toca sozinha para você conferir. Se não gostar, é só regravar.'))),
+        h('li', null, 'Ruído, filtro e som em um ouvido só (Detetives do Som) são aplicados por código sobre a sua gravação: não precisa gravar versões extras.'),
+        h('li', null, 'Os pares que aparecem nas duas faixas usam a mesma gravação.'))),
     list,
   ]);
 
+  function paintSeg() {
+    seg.replaceChildren(...GROUP_ORDER.map(id => h('button', {
+      class: 'seg' + (id === recGroup ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': String(id === recGroup),
+      onclick: () => { if (active) return; recGroup = id; paintSeg(); draw(); },
+    }, `${AGE_GROUPS[id].icon} ${AGE_GROUPS[id].name}`)));
+  }
+
   function updateSummary() {
-    const total = Bank.pairs.length * 2;
-    const done = Bank.pairs.reduce((n, p) => n + Bank.hasAudio(p, 'a') + Bank.hasAudio(p, 'b'), 0);
+    const keys = new Set(sections.filter(s => s.count).flatMap(sectionKeys));
+    const total = keys.size;
+    const done = [...keys].filter(k => Bank.recorded.has(k)).length;
     summary.replaceChildren(
       h('div', { class: 'progress-line' }, h('div', { class: 'progress-fill', style: `width:${total ? (100 * done) / total : 0}%` })),
-      h('p', null, h('strong', null, `${done} de ${total} palavras com voz gravada. `),
-        done < total
-          ? h('span', { class: 'muted' }, 'As que faltam usam a voz sintética do aparelho, que é menos precisa para diferenciar surdo × sonoro.')
-          : 'Tudo gravado! 🎉'));
+      h('p', null, done < total
+        ? [h('strong', null, `Faltam ${total - done} de ${total} gravações nesta faixa. `),
+          h('span', { class: 'muted' }, 'As que faltam usam a voz sintética do aparelho, que é menos precisa para diferenciar surdo × sonoro.')]
+        : h('strong', null, `Tudo gravado nesta faixa (${total})! 🎉`)));
+    list.querySelectorAll('[data-sec]').forEach(sum => {
+      const sec = sections.find(s => s.id === sum.dataset.sec);
+      if (sec) sum.querySelector('.sec-count').replaceChildren(missingBadge(sectionKeys(sec)));
+    });
+    list.querySelectorAll('[data-contrast]').forEach(t => {
+      const keys = Bank.inGroup(recGroup).filter(p => p.contrast === t.dataset.contrast).flatMap(p => [p.id + ':a', p.id + ':b']);
+      t.querySelector('.sec-count').replaceChildren(missingBadge(keys));
+    });
+  }
+  function missingBadge(keys) {
+    const miss = keys.filter(k => !Bank.recorded.has(k)).length;
+    return miss ? h('span', { class: 'badge warn' }, `faltam ${miss} de ${keys.length}`) : h('span', { class: 'badge fig' }, `✔ ${keys.length} gravadas`);
   }
 
   function draw() {
     list.replaceChildren();
-    for (const cid of Object.keys(CONTRASTS)) {
-      const pairs = Bank.pairs.filter(p => p.contrast === cid);
-      if (!pairs.length) continue;
-      list.append(h('h3', { class: 'group-title' }, contrastChip(cid)), ...pairs.map(pairCard));
+    sections = recordSections(recGroup);
+    for (const sec of sections) {
+      const body = h('div', { class: 'sec-body' });
+      if (sec.note) body.append(h('p', { class: 'muted small' }, sec.note));
+      if (sec.pairs) {
+        for (const cid of CONTRAST_ORDER) {
+          const pairs = sec.pairs.filter(p => p.contrast === cid);
+          if (!pairs.length) continue;
+          body.append(h('h3', { class: 'group-title', 'data-contrast': cid }, contrastChip(cid), ' ', h('span', { class: 'sec-count' })), ...pairs.map(pairCard));
+        }
+        if (!sec.pairs.length) body.append(h('p', { class: 'empty' }, 'Nenhum par nesta faixa. Toque em “Novo par”.'));
+      } else {
+        body.append(h('div', { class: 'pair-card' }, sec.items.map(it => recRow(it))));
+      }
+      list.append(h('details', { class: 'rec-sec', open: sec.id === 'pairs' },
+        h('summary', { 'data-sec': sec.id }, h('span', { class: 'sec-title' }, sec.title), ' ', h('span', { class: 'sec-count' })),
+        body));
     }
-    if (!Bank.pairs.length) list.append(h('p', { class: 'empty' }, 'Nenhum par cadastrado. Toque em “Novo par”.'));
     updateSummary();
   }
 
   function pairCard(pair) {
+    const shared = pair.groups.length > 1;
     return h('article', { class: 'pair-card' },
       h('div', { class: 'pair-head' },
-        h('span', { class: 'badge ' + (pair.figure ? 'fig' : 'sound') }, pair.figure ? '🖼️ tem figura' : '👂 só som'),
+        recGroup === 'pequenos' && h('span', { class: 'badge ' + (pair.figure ? 'fig' : 'sound') }, pair.figure ? '🖼️ tem figura' : '👂 só som'),
+        shared && h('span', { class: 'badge' }, 'nas duas faixas'),
         h('div', { class: 'spacer' }),
-        h('button', { class: 'btn small ghost', type: 'button', onclick: () => editPairDialog(pair, draw) }, '✏️ Editar')),
-      wordRow(pair, 'a'),
-      wordRow(pair, 'b'));
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => editPairDialog(pair, draw, recGroup) }, '✏️ Editar')),
+      recRow({ key: pair.id + ':a', text: pair.a.text, fig: figureEl(pair, 'a'), sub: pair.contrast !== 'outro' && 'surda' }),
+      recRow({ key: pair.id + ':b', text: pair.b.text, fig: figureEl(pair, 'b'), sub: pair.contrast !== 'outro' && 'sonora' }));
   }
 
-  function wordRow(pair, side) {
-    const key = pair.id + ':' + side;
+  /** Uma linha de gravação: figura, texto, situação, medidor e botões. */
+  function recRow(it) {
+    const key = it.key;
     const status = h('span', { class: 'rec-status' });
     const fill = h('span', { class: 'meter-fill' });
     const recBtn = h('button', { class: 'btn rec-btn', type: 'button', disabled: !canRecord });
     const playBtn = h('button', { class: 'btn', type: 'button' }, '▶️ Ouvir');
     const delBtn = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar gravação', title: 'Apagar gravação' }, '🗑️');
-    const row = h('div', { class: 'word-row' },
-      h('div', { class: 'word-fig' }, figureEl(pair, side)),
+    const row = h('div', { class: 'word-row' + (it.sentence ? ' sentence-row' : '') },
+      h('div', { class: 'word-fig' }, it.fig || h('span', { class: 'fig-emoji' }, '💬')),
       h('div', { class: 'word-info' },
-        h('span', { class: 'word-text' }, pair[side].text),
-        pair.contrast !== 'outro' && h('span', { class: 'muted small' }, side === 'a' ? 'surda' : 'sonora'),
+        h('span', { class: 'word-text' }, it.text),
+        it.sub && h('span', { class: 'muted small' }, it.sub),
         status),
       h('span', { class: 'meter', 'aria-hidden': 'true' }, fill),
       h('div', { class: 'word-actions' }, recBtn, playBtn, delBtn));
+    const playSteps = () => (it.sentence ? sentenceSteps(it.sentence) : [{ key, text: it.tts || it.text, synth: it.synth }]);
 
     function paint(state = '') {
-      const has = Bank.hasAudio(pair, side);
-      status.className = 'rec-status ' + (state === 'rec' ? 'recording' : has ? 'ok' : 'none');
-      status.textContent = state === 'rec' ? '● gravando…' : state === 'proc' ? 'recortando…' : has ? '✔ voz gravada' : 'sem gravação';
+      const has = Bank.recorded.has(key);
+      status.className = 'rec-status ' + (state === 'rec' ? 'recording' : has ? 'ok' : it.synth ? 'ok' : 'none');
+      status.textContent = state === 'rec' ? '● gravando…' : state === 'proc' ? 'recortando…' : has ? '✔ voz gravada' : it.synth ? 'som pronto' : 'sem gravação';
       recBtn.textContent = state === 'rec' ? '⏹️ Parar' : has ? '🔁 Regravar' : '⏺️ Gravar';
       recBtn.classList.toggle('recording', state === 'rec');
       row.classList.toggle('recording', state === 'rec');
@@ -1207,7 +1280,7 @@ async function renderRecordTab(el) {
       if (active) { if (active.key === key) active.stop(); return; }
       Sound.stop();
       try {
-        const ctl = await Recorder.start({ maxMs: 4000, onLevel: p => { fill.style.transform = `scaleX(${Math.min(1, p * 1.6)})`; } });
+        const ctl = await Recorder.start({ maxMs: it.maxMs || 4000, onLevel: p => { fill.style.transform = `scaleX(${Math.min(1, p * 1.6)})`; } });
         active = { key, stop: ctl.stop };
         paint('rec');
         const blob = await ctl.done;
@@ -1215,11 +1288,11 @@ async function renderRecordTab(el) {
         if (leaving) return;
         paint('proc');
         const res = await processRecording(blob);
-        if (!res) { paint(); toast('Não deu para ouvir a palavra. Fale um pouco mais perto do aparelho e tente de novo.', 4500); return; }
+        if (!res) { paint(); toast('Não deu para ouvir. Fale um pouco mais perto do aparelho e tente de novo.', 4500); return; }
         await saveRecording(key, res);
         paint();
         updateSummary();
-        await Sound.sequence([{ pair, side }]);
+        await Sound.sequence([{ key, text: it.text }]);
       } catch (e) {
         active = null;
         paint();
@@ -1228,11 +1301,11 @@ async function renderRecordTab(el) {
     };
     playBtn.onclick = async () => {
       if (active) return;
-      const r = await Sound.sequence([{ pair, side }]);
+      const r = await Sound.sequence(playSteps(), 60);
       if (r.tts && !r.cancelled) toast('Sem gravação: essa foi a voz sintética do aparelho.');
     };
     delBtn.onclick = async () => {
-      if (!(await confirmBox(`Apagar a gravação de “${pair[side].text}”?`, { ok: 'Apagar', danger: true }))) return;
+      if (!(await confirmBox(`Apagar a gravação de “${it.text}”?`, { ok: 'Apagar', danger: true }))) return;
       await deleteRecording(key);
       paint();
       updateSummary();
@@ -1241,6 +1314,7 @@ async function renderRecordTab(el) {
     return row;
   }
 
+  paintSeg();
   draw();
 }
 
@@ -3773,9 +3847,6 @@ async function deleteKid(kid, onDone) {
   onDone();
 }
 
-/* ---------- aba "Evolução" ---------- */
-FonoTabs.push({ id: 'evolucao', label: 'Evolução', icon: '📈', order: 4, render: renderProgressTab });
-
 function lineChart(series, labels) {
   const W = 640;
   const H = 260;
@@ -3808,40 +3879,87 @@ function lineChart(series, labels) {
   return s + '</svg>';
 }
 
+/* ---------- aba "Evolução": relatório por faixa, por atividade e por par ---------- */
+FonoTabs.push({ id: 'evolucao', label: 'Evolução', icon: '📈', order: 4, render: renderProgressTab });
+
+const actName = id => (ACTIVITIES[id] ? ACTIVITIES[id].name : id);
+const trialKey = t => t.itemKey || t.pairId || t.item || '?';
+const trialLabel = t => t.words || t.item || '?';
+/** Texto do nível alcançado numa sessão adaptativa (ou do recorde da Missão relâmpago). */
+function levelText(s) {
+  if (s.timed) return `${s.score || 0} acertos em ${s.timed} s`;
+  const a = s.adaptive;
+  if (!a) return '';
+  const def = ACTIVITIES[s.mode];
+  const lab = l => (def && def.adaptive ? def.adaptive.label(l) : String(l));
+  const info = ADAPT_INFO[a.kind];
+  return `máx. ${lab(a.max)}` + (info && a.kind !== 'seq' ? ` (${info.detail(a.max)})` : '') + ` · terminou em ${lab(a.end)}`;
+}
+/** Resumo por atividade: sessões, tentativas, acerto e o melhor nível alcançado. */
+function activitySummary(ss) {
+  const by = {};
+  for (const s of ss) {
+    const a = by[s.mode] || (by[s.mode] = { mode: s.mode, sessions: 0, hit: 0, tot: 0, maxLevel: null, kind: null, bestScore: null, maxSeq: null });
+    a.sessions++;
+    a.tot += s.trials.length;
+    a.hit += s.trials.filter(t => t.correct).length;
+    if (s.adaptive) { a.kind = s.adaptive.kind; a.maxLevel = Math.max(a.maxLevel || 0, s.adaptive.max); }
+    if (s.timed) a.bestScore = Math.max(a.bestScore || 0, s.score || 0);
+    const seq = s.trials.filter(t => t.seqLen && t.correct).map(t => t.seqLen);
+    if (seq.length) a.maxSeq = Math.max(a.maxSeq || 0, ...seq);
+  }
+  return Object.values(by);
+}
+function summaryDetail(a) {
+  const def = ACTIVITIES[a.mode];
+  if (a.bestScore != null) return `recorde: ${a.bestScore} acertos em 60 s`;
+  if (a.mode === 'code' || a.mode === 'memory') return a.maxSeq ? `maior sequência certa: ${a.maxSeq}` : 'nenhuma sequência certa ainda';
+  if (a.maxLevel != null && def && def.adaptive) {
+    const info = ADAPT_INFO[a.kind];
+    return `nível máximo: ${def.adaptive.label(a.maxLevel)}` + (info ? ` (${info.detail(a.maxLevel)})` : '');
+  }
+  return '';
+}
+
 function exportCsv(sessions, base, nickOf) {
-  const head = ['data', 'hora', 'crianca', 'modo', 'sessao_completa', 'contraste', 'par', 'tentativas', 'acertos', 'erros', 'percentual_acerto', 'vezes_que_ouviu_de_novo', 'voz_sintetica'];
+  const head = ['data', 'hora', 'crianca', 'faixa', 'atividade', 'sessao_completa', 'contraste', 'par_ou_item', 'tentativas', 'acertos', 'erros',
+    'percentual_acerto', 'vezes_que_ouviu_de_novo', 'voz_sintetica', 'nivel_tipo', 'nivel_inicial', 'nivel_final', 'nivel_maximo', 'sequencia_max_certa', 'acertos_em_60s'];
   const rows = [];
-  for (const s of sessions.slice().sort((a, b) => a.date.localeCompare(b.date))) {
+  for (const s of sessions.map(normSession).sort((a, b) => a.date.localeCompare(b.date))) {
     const d = new Date(s.date);
-    const byPair = {};
+    const byItem = {};
     for (const t of s.trials) {
-      const p = byPair[t.pairId] || (byPair[t.pairId] = { contrast: t.contrast, words: t.words, hit: 0, tot: 0, replays: 0, tts: false });
+      const k = trialKey(t);
+      const p = byItem[k] || (byItem[k] = { contrast: t.contrast, words: trialLabel(t), hit: 0, tot: 0, replays: 0, tts: false, seq: null });
       p.tot++;
-      if (t.correct) p.hit++;
+      if (t.correct) { p.hit++; if (t.seqLen) p.seq = Math.max(p.seq || 0, t.seqLen); }
       p.replays += t.replays || 0;
       if (t.tts) p.tts = true;
     }
-    for (const p of Object.values(byPair)) {
+    const a = s.adaptive;
+    const info = a && ADAPT_INFO[a.kind];
+    for (const p of Object.values(byItem)) {
       rows.push([
         d.toLocaleDateString('pt-BR'), d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        nickOf(s.childId), ACTIVITIES[s.mode] ? ACTIVITIES[s.mode].name : s.mode, s.complete ? 'sim' : 'não',
-        (CONTRASTS[p.contrast] || CONTRASTS.outro).short, p.words, p.tot, p.hit, p.tot - p.hit, pct(p.hit, p.tot),
+        nickOf(s.childId), groupOf(s.group).name, actName(s.mode), s.complete ? 'sim' : 'não',
+        CONTRASTS[p.contrast] ? CONTRASTS[p.contrast].short : '', p.words, p.tot, p.hit, p.tot - p.hit, pct(p.hit, p.tot),
         p.replays, p.tts ? 'sim' : 'não',
+        info ? info.name : '', a ? a.start : '', a ? a.end : '', a ? a.max : '', p.seq || '', s.timed ? s.score || 0 : '',
       ]);
     }
   }
-  const esc = v => {
+  const escCsv = v => {
     const s = String(v == null ? '' : v);
     return /[;"\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   // Separador ";" e BOM: abre certinho no Excel em português.
-  const csv = '﻿' + [head, ...rows].map(r => r.map(esc).join(';')).join('\r\n');
+  const csv = '﻿' + [head, ...rows].map(r => r.map(escCsv).join(';')).join('\r\n');
   saveFile(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${base}-${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 async function renderProgressTab(el) {
   const kids = await allChildren();
-  const all = await DB.all('sessions');
+  const all = await allSessions();
   const opts = kids.slice();
   if (all.some(s => s.childId === GUEST.id)) opts.push(GUEST);
   const nickOf = id => (opts.find(k => k.id === id) || { nick: '(removida)' }).nick;
@@ -3853,83 +3971,143 @@ async function renderProgressTab(el) {
     return;
   }
   let childId = State.child && opts.some(k => k.id === State.child.id) ? State.child.id : opts[0].id;
+  let gid = null;
   let modeF = 'all';
   const childSel = h('select', { class: 'input' }, opts.map(k => h('option', { value: k.id }, `${k.avatar} ${k.nick}`)));
   childSel.value = childId;
-  childSel.onchange = () => { childId = childSel.value; draw(); };
-  const modeSel = h('select', { class: 'input' }, h('option', { value: 'all' }, 'Todos os modos'), Object.values(ACTIVITIES).map(m => h('option', { value: m.id }, m.name)));
+  const groupSel = h('select', { class: 'input' });
+  const modeSel = h('select', { class: 'input' });
+  childSel.onchange = () => { childId = childSel.value; gid = null; modeF = 'all'; draw(); };
+  groupSel.onchange = () => { gid = groupSel.value; modeF = 'all'; draw(); };
   modeSel.onchange = () => { modeF = modeSel.value; draw(); };
   const body = h('div');
   add(el, [
     h('div', { class: 'row wrap filters' },
       h('label', { class: 'field inline' }, h('span', null, 'Criança'), childSel),
-      h('label', { class: 'field inline' }, h('span', null, 'Modo'), modeSel)),
+      h('label', { class: 'field inline' }, h('span', null, 'Faixa'), groupSel),
+      h('label', { class: 'field inline' }, h('span', null, 'Atividade'), modeSel)),
     body,
   ]);
 
   function draw() {
-    const ss = all.filter(s => s.childId === childId && (modeF === 'all' || s.mode === modeF)).sort((a, b) => a.date.localeCompare(b.date));
+    const mine = all.filter(s => s.childId === childId);
+    const groupsWithData = GROUP_ORDER.filter(g => mine.some(s => s.group === g));
+    const kid = opts.find(k => k.id === childId);
+    if (!gid || !groupsWithData.includes(gid)) gid = groupsWithData.includes(kidGroup(kid)) ? kidGroup(kid) : (groupsWithData[0] || kidGroup(kid));
+    groupSel.replaceChildren(...GROUP_ORDER.map(g => h('option', { value: g }, `${AGE_GROUPS[g].icon} ${AGE_GROUPS[g].name}` + (groupsWithData.includes(g) ? '' : ' (sem sessões)'))));
+    groupSel.value = gid;
+    const inGroup = mine.filter(s => s.group === gid);
+    const modes = [...new Set(inGroup.map(s => s.mode))].sort((a, b) => groupOf(gid).activities.indexOf(a) - groupOf(gid).activities.indexOf(b));
+    if (modeF !== 'all' && !modes.includes(modeF)) modeF = 'all';
+    modeSel.replaceChildren(h('option', { value: 'all' }, 'Todas as atividades'), modes.map(m => h('option', { value: m }, actName(m))));
+    modeSel.value = modeF;
+
+    const ss = inGroup.filter(s => modeF === 'all' || s.mode === modeF).sort((a, b) => a.date.localeCompare(b.date));
     body.replaceChildren();
     if (!ss.length) { body.append(h('p', { class: 'empty' }, 'Nenhuma sessão com esse filtro.')); return; }
     const trials = ss.flatMap(s => s.trials);
-    const byC = statsBy(trials, 'contrast');
+    const cTrials = trials.filter(t => CONTRASTS[t.contrast]);
+    const byC = statsBy(cTrials, 'contrast');
     const contrasts = CONTRAST_ORDER.filter(c => byC[c]);
-    const perSession = ss.map(s => statsBy(s.trials, 'contrast'));
+    const perSession = ss.map(s => statsBy(s.trials.filter(t => CONTRASTS[t.contrast]), 'contrast'));
     const lastOf = c => { for (let i = perSession.length - 1; i >= 0; i--) if (perSession[i][c]) return perSession[i][c]; return null; };
 
-    const cards = h('div', { class: 'stat-cards' }, contrasts.map(c => h('div', { class: 'stat-card', style: `--c:${CONTRASTS[c].color}` },
+    /* por contraste */
+    const cards = contrasts.length ? h('div', { class: 'stat-cards' }, contrasts.map(c => h('div', { class: 'stat-card', style: `--c:${CONTRASTS[c].color}` },
       contrastChip(c),
       h('div', { class: 'stat-big' }, pct(byC[c].hit, byC[c].tot) + '%'),
       h('div', { class: 'muted small' }, `${byC[c].hit} de ${byC[c].tot} acertos`),
-      h('div', { class: 'small' }, 'última sessão: ', pctCell(lastOf(c))))));
-
+      h('div', { class: 'small' }, 'última sessão: ', pctCell(lastOf(c)))))) : null;
     const series = contrasts.map(c => ({
       name: CONTRASTS[c].short, color: CONTRASTS[c].color,
       values: perSession.map(st => (st[c] ? st[c].hit / st[c].tot : null)),
     }));
-    const chart = h('div', { class: 'chart-box', html: lineChart(series, ss.map(s => fmtShortDate(s.date))) });
-    const legend = h('div', { class: 'legend' }, series.map(se => h('span', { class: 'legend-item' }, h('span', { class: 'legend-dot', style: `background:${se.color}` }), se.name)));
+    const withC = ss.map((s, i) => i).filter(i => Object.keys(perSession[i]).length);
+    const chart = series.length && withC.length ? h('div', { class: 'chart-box', html: lineChart(series.map(se => ({ ...se, values: withC.map(i => se.values[i]) })), withC.map(i => fmtShortDate(ss[i].date))) }) : null;
+    const legend = series.length ? h('div', { class: 'legend' }, series.map(se => h('span', { class: 'legend-item' }, h('span', { class: 'legend-dot', style: `background:${se.color}` }), se.name))) : null;
 
-    const byP = statsBy(trials, 'pairId');
-    const rows = Object.entries(byP).map(([pid, st]) => {
-      const t = trials.find(x => x.pairId === pid);
-      const lastS = ss.slice().reverse().find(s => s.trials.some(x => x.pairId === pid));
-      return { contrast: t.contrast, words: t.words, st, last: statsBy(lastS.trials.filter(x => x.pairId === pid), 'pairId')[pid] };
-    }).sort((a, b) => (CONTRAST_ORDER.indexOf(a.contrast) - CONTRAST_ORDER.indexOf(b.contrast)) || a.words.localeCompare(b.words, 'pt-BR'));
-    const table = h('table', { class: 'data' },
-      h('thead', null, h('tr', null, h('th', null, 'Contraste'), h('th', null, 'Par'), h('th', { class: 'num' }, 'Tentativas'), h('th', { class: 'num' }, 'Acerto geral'), h('th', { class: 'num' }, 'Última sessão'))),
-      h('tbody', null, rows.map(r => h('tr', null,
-        h('td', null, contrastChip(r.contrast)), h('td', null, r.words), h('td', { class: 'num' }, r.st.tot),
-        h('td', { class: 'num' }, pctCell(r.st)), h('td', { class: 'num' }, pctCell(r.last))))));
+    /* por atividade */
+    const sums = activitySummary(ss).sort((a, b) => groupOf(gid).activities.indexOf(a.mode) - groupOf(gid).activities.indexOf(b.mode));
+    const actTable = h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Atividade'), h('th', { class: 'num' }, 'Sessões'), h('th', { class: 'num' }, 'Tentativas'), h('th', { class: 'num' }, 'Acerto'), h('th', null, 'Nível / sequência / recorde'))),
+      h('tbody', null, sums.map(a => h('tr', null,
+        h('td', null, `${ACTIVITIES[a.mode] ? ACTIVITIES[a.mode].icon : ''} ${actName(a.mode)}`), h('td', { class: 'num' }, a.sessions), h('td', { class: 'num' }, a.tot),
+        h('td', { class: 'num' }, pctCell({ hit: a.hit, tot: a.tot })), h('td', { class: 'small wrap' }, summaryDetail(a))))));
 
+    /* por par (ou item) */
+    let itemTable;
+    if (modeF === 'all') {
+      // Matriz: cada par de palavras × cada atividade que usou pares.
+      const actCols = modes.filter(m => ss.some(s => s.mode === m && s.trials.some(t => t.pairId)));
+      const rows = {};
+      for (const s of ss) for (const t of s.trials) {
+        if (!t.pairId) continue;
+        const r = rows[t.pairId] || (rows[t.pairId] = { contrast: t.contrast, words: t.words, all: { hit: 0, tot: 0 }, by: {} });
+        const b = r.by[s.mode] || (r.by[s.mode] = { hit: 0, tot: 0 });
+        b.tot++; r.all.tot++;
+        if (t.correct) { b.hit++; r.all.hit++; }
+      }
+      const list = Object.values(rows).sort((a, b) => (CONTRAST_ORDER.indexOf(a.contrast) - CONTRAST_ORDER.indexOf(b.contrast)) || a.words.localeCompare(b.words, 'pt-BR'));
+      itemTable = list.length ? h('table', { class: 'data' },
+        h('thead', null, h('tr', null, h('th', null, 'Contraste'), h('th', null, 'Par'), actCols.map(m => h('th', { class: 'num' }, actName(m))), h('th', { class: 'num' }, 'Geral'))),
+        h('tbody', null, list.map(r => h('tr', null,
+          h('td', null, CONTRASTS[r.contrast] ? contrastChip(r.contrast) : '—'), h('td', null, r.words),
+          actCols.map(m => h('td', { class: 'num' }, r.by[m] ? pctCell(r.by[m]) : '—')),
+          h('td', { class: 'num' }, pctCell(r.all), h('span', { class: 'muted small' }, ` (${r.all.tot})`)))))) : null;
+    } else {
+      const byI = {};
+      for (const t of trials) {
+        const k = trialKey(t);
+        const r = byI[k] || (byI[k] = { contrast: t.contrast, words: trialLabel(t), st: { hit: 0, tot: 0 } });
+        r.st.tot++;
+        if (t.correct) r.st.hit++;
+      }
+      const lastS = ss[ss.length - 1];
+      const lastBy = {};
+      for (const t of lastS.trials) { const k = trialKey(t); const r = lastBy[k] || (lastBy[k] = { hit: 0, tot: 0 }); r.tot++; if (t.correct) r.hit++; }
+      const list = Object.entries(byI).sort(([, a], [, b]) => (CONTRAST_ORDER.indexOf(a.contrast) - CONTRAST_ORDER.indexOf(b.contrast)) || a.words.localeCompare(b.words, 'pt-BR'));
+      itemTable = h('table', { class: 'data' },
+        h('thead', null, h('tr', null, h('th', null, 'Contraste'), h('th', null, 'Par / item'), h('th', { class: 'num' }, 'Tentativas'), h('th', { class: 'num' }, 'Acerto geral'), h('th', { class: 'num' }, 'Última sessão'))),
+        h('tbody', null, list.map(([k, r]) => h('tr', null,
+          h('td', null, CONTRASTS[r.contrast] ? contrastChip(r.contrast) : '—'), h('td', null, r.words), h('td', { class: 'num' }, r.st.tot),
+          h('td', { class: 'num' }, pctCell(r.st)), h('td', { class: 'num' }, pctCell(lastBy[k]))))));
+    }
+
+    /* sessões */
     const list = h('div', { class: 'session-list' }, ss.slice().reverse().map(s => {
       const hit = s.trials.filter(t => t.correct).length;
-      const byc = statsBy(s.trials, 'contrast');
+      const byc = statsBy(s.trials.filter(t => CONTRASTS[t.contrast]), 'contrast');
       const del = async () => {
         if (!(await confirmBox(`Apagar a sessão de ${fmtDateTime(s.date)}?`, { ok: 'Apagar', danger: true }))) return;
         await DB.del('sessions', s.id);
         all.splice(all.indexOf(s), 1);
         draw();
       };
+      const lv = levelText(s);
       return h('div', { class: 'session-row' },
         h('div', { class: 'session-main' },
           h('strong', null, fmtDateTime(s.date)),
-          h('span', { class: 'muted small' }, (ACTIVITIES[s.mode] ? ACTIVITIES[s.mode].name : s.mode) + (s.complete ? '' : ' · incompleta'))),
+          h('span', { class: 'muted small' }, actName(s.mode) + (s.complete ? '' : ' · incompleta')),
+          lv && h('span', { class: 'small level-text' }, lv)),
         h('div', { class: 'row wrap session-chips' }, CONTRAST_ORDER.filter(c => byc[c]).map(c => h('span', { class: 'rate-chip' }, contrastChip(c), ` ${byc[c].hit}/${byc[c].tot}`))),
         h('strong', { class: 'session-score' }, `${hit}/${s.trials.length}`),
         h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar sessão', title: 'Apagar sessão', onclick: del }, '🗑️'));
     }));
 
     add(body, [
+      cards && h('h3', null, 'Acerto por contraste'),
       cards,
-      h('h3', null, 'Acertos por contraste ao longo das sessões'),
+      chart && h('h3', null, 'Acerto por contraste ao longo das sessões'),
       chart,
       legend,
-      h('h3', null, 'Por par de palavras'),
-      h('div', { class: 'table-wrap' }, table),
+      modeF === 'all' && h('h3', null, 'Por atividade'),
+      modeF === 'all' && h('div', { class: 'table-wrap' }, actTable),
+      modeF !== 'all' && sums[0] && summaryDetail(sums[0]) && h('p', { class: 'level-summary' }, h('strong', null, summaryDetail(sums[0]))),
+      itemTable && h('h3', null, modeF === 'all' ? 'Acerto por par em cada atividade' : 'Acerto por par / item'),
+      itemTable && h('div', { class: 'table-wrap' }, itemTable),
       h('div', { class: 'tab-head section-head' },
         h('h3', null, `Sessões (${ss.length})`),
-        h('button', { class: 'btn small', type: 'button', onclick: () => exportCsv(ss, 'escuta-so-' + slug(nickOf(childId)), nickOf) }, '⬇️ CSV desta criança')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => exportCsv(ss, `escuta-so-${slug(nickOf(childId))}-${gid}`, nickOf) }, '⬇️ CSV deste filtro')),
       list,
     ]);
   }
@@ -3956,7 +4134,7 @@ async function buildBackup() {
   const word = w => ({ ...w, img: w.img ? { mime: w.img.mime, data: abToB64(w.img.data) } : null });
   return {
     app: 'escuta-so',
-    format: 1,
+    format: 2,
     appVersion: APP_VERSION,
     exportedAt: new Date().toISOString(),
     pairs: pairs.map(p => ({ ...p, a: word(p.a), b: word(p.b) })),
@@ -3970,27 +4148,31 @@ function parseBackup(text) {
   let data;
   try { data = JSON.parse(text); } catch (_) { data = null; }
   if (!data || data.app !== 'escuta-so' || !Array.isArray(data.pairs)) throw new Error('Este arquivo não é um backup do Escuta Só!.');
-  if (data.format > 1) throw new Error('Este backup foi feito por uma versão mais nova do jogo. Atualize o jogo e tente de novo.');
+  if (data.format > 2) throw new Error('Este backup foi feito por uma versão mais nova do jogo. Atualize o jogo e tente de novo.');
   for (const k of ['audio', 'children', 'sessions', 'kv']) if (!Array.isArray(data[k])) data[k] = [];
   return data;
 }
 async function restoreBackup(data) {
   // Converte tudo antes de apagar qualquer coisa: se o arquivo estiver estragado, nada se perde.
   const word = w => ({ ...w, img: w && w.img ? { mime: w.img.mime, data: b64ToAb(w.img.data) } : null });
-  const pairs = data.pairs.map(p => ({ ...p, a: word(p.a), b: word(p.b) }));
+  // Backups da versão 1 (sem faixas) são aceitos: os campos novos são preenchidos aqui.
+  const pairs = data.pairs.map(p => normPair({ ...p, a: word(p.a), b: word(p.b) }));
   const audio = data.audio.map(r => ({ ...r, data: b64ToAb(r.data) }));
+  const children = data.children.map(normKid);
+  const sessions = data.sessions.map(normSession);
   await DB.write(STORES, t => {
     STORES.forEach(s => t.objectStore(s).clear());
     pairs.forEach(p => t.objectStore('pairs').put(p));
     audio.forEach(r => t.objectStore('audio').put(r));
-    data.children.forEach(c => t.objectStore('children').put(c));
-    data.sessions.forEach(s => t.objectStore('sessions').put(s));
+    children.forEach(c => t.objectStore('children').put(c));
+    sessions.forEach(s => t.objectStore('sessions').put(s));
     data.kv.forEach(k => t.objectStore('kv').put(k));
     t.objectStore('kv').put({ key: 'seeded', value: true });
     t.objectStore('kv').put({ key: 'lastBackup', value: data.exportedAt || new Date().toISOString() });
   });
   Sound.cache.clear();
   State.child = null;
+  await Bank.seed();            // backup antigo: acrescenta o banco dos Detetives sem mexer no resto
   await Bank.load();
   await loadSettings();
 }

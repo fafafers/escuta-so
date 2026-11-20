@@ -1268,3 +1268,17 @@ table.data .num { text-align: right; }
 .debrief-xp .xp { justify-content: center; }
 .rank-up { font-size: 28px; font-weight: 800; color: var(--orange); animation: pop-in .6s cubic-bezier(.3, 1.6, .5, 1); }
 .debrief-badges { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+/* ---------- área da fono: gravação por faixa e relatórios ---------- */
+.seg-group.wide { display: flex; flex-wrap: wrap; width: 100%; max-width: 680px; border-radius: 22px; margin: 8px 0 10px; }
+.seg-group.wide .seg { flex: 1 1 220px; font-size: 17px; padding: 6px 14px; }
+.rec-sec { border: 2px solid var(--line); border-radius: 18px; padding: 4px 14px; margin: 12px 0; }
+.rec-sec > summary { min-height: 52px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; font-weight: 800; font-size: 19px; }
+.rec-sec[open] > summary { border-bottom: 1px dashed var(--line); margin-bottom: 6px; }
+.sec-body { padding-bottom: 8px; }
+.group-title .sec-count { font-size: 14px; }
+.syl-fig { font-weight: 800; font-size: 26px; }
+.sentence-row .word-text { font-size: 18px; }
+.level-text { color: #2763c4; font-weight: 700; }
+.level-summary { background: #eef5ff; border-radius: 14px; padding: 10px 14px; }
+table.data td.wrap { white-space: normal; min-width: 220px; }
