@@ -1606,3 +1606,23 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
 .mission-art { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .mission-icon { font-family: var(--emoji); font-size: clamp(46px, 9vmin, 80px); line-height: 1; }
 .mission-tag { font-weight: 800; letter-spacing: 2px; background: #fff; color: #1d2b4f; padding: 4px 12px; border-radius: 10px; box-shadow: var(--shadow-sm); font-size: clamp(15px, 2.6vmin, 22px); }
+
+/* ---------- plano de sessão e relatório (v3) ---------- */
+.plan-btn { background: #fff3c4; }
+.plan-next { display: flex; align-items: center; gap: 5vmin; }
+.plan-card { min-height: 0; width: clamp(200px, 34vmin, 300px); pointer-events: none; }
+.plan-go { padding: 16px 22px; min-height: 0; }
+.plan-free { font-family: var(--emoji); font-size: clamp(90px, 18vmin, 160px); line-height: 1; }
+.plan-free.big { font-size: clamp(120px, 26vmin, 220px); }
+.plan-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.plan-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 2px solid var(--line); border-radius: 14px; }
+.plan-num { width: 32px; height: 32px; border-radius: 50%; background: var(--yellow); display: grid; place-items: center; font-weight: 800; }
+.plan-name { flex: 1 1 220px; font-weight: 700; }
+.plan-add { margin: 8px 0 14px; }
+.big-start { margin-top: 16px; min-height: 64px; font-size: 20px; }
+.drawings { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+.drawing { margin: 0; padding: 6px; border: 2px solid var(--line); border-radius: 14px; text-align: center; }
+.drawing.ok { border-color: #9fd8b3; }
+.drawing.no { border-color: #f2c48d; }
+.drawing img { width: 100%; max-width: 120px; border-radius: 8px; background: #fff; }
+.drawing figcaption { font-size: 14px; font-weight: 700; }

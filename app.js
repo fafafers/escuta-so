@@ -142,6 +142,7 @@ const trialsFor = G => (G.trialOptions.includes(State.settings.trialsBy[G.id]) ?
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 const State = {
+  plan: null,             // plano de sessão em andamento: { childId, steps, i }
   settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
   child: null,            // criança jogando agora
   group: DEFAULT_GROUP,   // faixa escolhida agora
@@ -400,6 +401,8 @@ Screens.menu = {
       h('div', { class: 'spacer' }));
     app.append(top);
     await (MenuStyles[G.menu] || MenuStyles.cards)(app, { child, G, acts, top, alive });
+    const plan = child.id !== GUEST.id ? await getPlan(child.id) : null;
+    if (plan && alive()) top.insertBefore(iconBtn('📋', 'Começar o plano de hoje', () => { AudioEngine.unlock(); startPlan(child, plan); }, 'plan-btn'), top.querySelector('.spacer').nextSibling);
     top.append(fonoButton());
   },
 };
@@ -2501,7 +2504,7 @@ const Rewards = {
 
 Screens.game = {
   themed: true,
-  async render(app, { mode }, alive) {
+  async render(app, { mode, minutes = null, plan = false }, alive) {
     const def = ACTIVITIES[mode];
     const G = groupOf(State.group);
     const child = State.child || GUEST;
@@ -2519,7 +2522,8 @@ Screens.game = {
     ctx.adapt = adapt;
     ctx.level = lv.level;
     const timed = def.timed || 0;                       // segundos (Missão relâmpago)
-    const trials = def.build(ctx, timed ? 200 : trialsFor(G));
+    const trials = def.build(ctx, timed ? 200 : minutes ? 80 : trialsFor(G));
+    let deadline = 0;                                    // plano de sessão: duração em minutos, sem relógio na tela
     const session = {
       id: uid(), childId: child.id, group: G.id, date: new Date().toISOString(), mode: def.id,
       planned: timed ? null : trials.length, complete: false,
@@ -2540,7 +2544,7 @@ Screens.game = {
       }
     });
 
-    const dots = timed ? null : h('div', { class: 'dots', 'aria-hidden': 'true' }, trials.map(() => h('span', { class: 'dot' })));
+    const dots = timed || minutes ? null : h('div', { class: 'dots', 'aria-hidden': 'true' }, trials.map(() => h('span', { class: 'dot' })));
     const timeFill = h('span', { class: 'time-fill' });
     const scoreEl = h('span', { class: 'time-score' }, '0');
     const progress = timed ? h('div', { class: 'time-box', 'aria-label': 'Tempo' }, h('span', { class: 'time-bar' }, timeFill), scoreEl) : dots;
@@ -2561,7 +2565,7 @@ Screens.game = {
       openOverlay(h('div', { class: 'exit-ask' },
         h('div', { class: 'exit-art', html: critter(CRITTER_A) }),
         h('div', { class: 'exit-actions' },
-          h('button', { class: 'big-choice', type: 'button', 'aria-label': 'Sair do jogo', onclick: () => go('menu') }, '🏠'),
+          h('button', { class: 'big-choice', type: 'button', 'aria-label': 'Sair do jogo', onclick: () => { State.plan = null; go('menu'); } }, '🏠'),
           h('button', { class: 'big-choice go-on', type: 'button', 'aria-label': 'Continuar jogando', onclick: closeOverlay }, '▶️'))),
       { cls: 'exit-dialog' });
     }
@@ -2640,7 +2644,7 @@ Screens.game = {
       await def.runFree(g);
       if (!g.alive()) return;
       await markFamiliar(child.id, ctx.pairs);
-      go('menu');
+      if (plan && State.plan) { State.plan.i++; runPlanStep(); } else go('menu');
       return;
     }
     // Par novo para esta criança: antes do jogo, "Conheça as palavras" com os pares novos.
@@ -2661,6 +2665,7 @@ Screens.game = {
       await sleep(i === 0 ? 500 : 300);
       if (!g.alive()) return;
       if (timer && i === 0) timer.start();
+      if (minutes && i === 0) deadline = Date.now() + minutes * 60000;
       if (g.timeUp()) break;
       if (dots) dots.children[i].classList.add('current');
       g.tts = false;
@@ -2684,6 +2689,7 @@ Screens.game = {
       if (dots) dots.children[i].className = 'dot done';
       if (timed) scoreEl.textContent = String(session.trials.filter(t => t.correct).length);
       if (g.timeUp()) break;
+      if (deadline && Date.now() >= deadline) break;
     }
     if (timer) timer.stop();
     if (def.afterRound && session.trials.length && g.alive()) {      // ex.: revelação das letras (Vibra ou sopra?)
@@ -2692,11 +2698,14 @@ Screens.game = {
     }
     session.complete = true;
     if (timed) session.score = session.trials.filter(t => t.correct).length;
+    if (minutes) { session.minutes = minutes; session.planned = session.trials.length; }
     if (adapt) await adapt.save(session.adaptive.max);
     await DB.put('sessions', session);
     const levelUp = await Levels.afterSession(child.id, def, G, session);
     const out = await (Rewards[G.reward] || Rewards.stickers)(child, session, def, levelUp);
-    if (g.alive()) go(out.screen, out.params);
+    if (!g.alive()) return;
+    if (plan && State.plan) { State.plan.i++; go('planNext', { stars: out.params.stars || starsFor(accOf(session)) }); return; }
+    go(out.screen, out.params);
   },
 };
 
@@ -4294,6 +4303,147 @@ async function kidAudioDialog(kid, onDone) {
   ], { cls: 'wide' });
 }
 
+/* =========================================================================
+ * 3f. PLANO DE SESSÃO (versão 3)
+ * Sequência montada pela fono (ex.: aquecimento 3 min → atividade-alvo → jogo livre),
+ * rodando uma atividade atrás da outra sem voltar ao menu.
+ * kv "plan:<criança>" = { steps: [{ act, minutes }] , free: true }
+ * ========================================================================= */
+const PLAN_FREE = 'free';
+async function getPlan(childId) {
+  const p = await DB.kv('plan:' + childId, null);
+  return p && Array.isArray(p.steps) && p.steps.length ? p : null;
+}
+function startPlan(child, plan) {
+  State.child = child;
+  State.group = kidGroup(child);
+  State.plan = { childId: child.id, steps: plan.steps.slice(), i: 0 };
+  runPlanStep();
+}
+function runPlanStep() {
+  const P = State.plan;
+  if (!P) { go('menu'); return; }
+  const st = P.steps[P.i];
+  if (!st) { State.plan = null; go('planEnd'); return; }
+  if (st.act === PLAN_FREE || !ACTIVITIES[st.act]) { State.plan = null; go('menu', { free: true }); return; }
+  go('game', { mode: st.act, minutes: st.minutes || null, plan: true });
+}
+/** Modelo sugerido: aquecimento (3 min) → atividade do degrau atual → jogo livre. */
+async function planTemplate(child) {
+  const gid = kidGroup(child);
+  const G = groupOf(gid);
+  const warm = { pequenos: 'sounds', exploradores: 'voicing', detetives: 'hidden' }[gid] || G.activities.find(id => ACTIVITIES[id] && !ACTIVITIES[id].free);
+  const ids = new Set(await roundPairIds(child.id, gid));
+  const pairs = Bank.pairs.filter(p => ids.has(p.id));
+  const cs = [...new Set(pairs.map(p => p.contrast))].filter(c => CONTRAST_PHON[c]);
+  let target = null;
+  if (cs.length) {
+    const st = await ladderStatus(child.id, cs);
+    const step = Math.min(...cs.map(c => st[c].current));
+    const opts = activitiesOfStep(step).filter(d => !d.free);
+    target = (opts.find(d => G.activities.includes(d.id)) || opts[0] || {}).id || null;
+  }
+  if (!target) target = G.activities.find(id => ACTIVITIES[id] && !ACTIVITIES[id].free && id !== warm);
+  return { steps: [{ act: warm, minutes: 3 }, { act: target, minutes: null }, { act: PLAN_FREE, minutes: null }].filter(s => s.act) };
+}
+
+/* Entre uma atividade e a próxima do plano: estrelas da que acabou e a próxima já aparecendo. */
+Screens.planNext = {
+  themed: true,
+  async render(app, p, alive) {
+    const P = State.plan;
+    const nextStep = P && P.steps[P.i];
+    const next = nextStep && ACTIVITIES[nextStep.act];
+    const starEls = [1, 2, 3].map(i => h('span', { class: 'rstar' + (i <= p.stars ? ' earned' : '') }, '⭐'));
+    const goBtn = h('button', { class: 'btn-start plan-go', type: 'button', 'aria-label': 'Próxima atividade' }, h('span', { class: 'play-ico', html: PLAY_SVG }));
+    goBtn.onclick = () => runPlanStep();
+    add(app, [
+      h('div', { class: 'topbar' }, iconBtn('🏠', 'Sair do plano', () => { State.plan = null; go('menu'); })),
+      h('div', { class: 'reward' },
+        h('div', { class: 'reward-stars' }, starEls),
+        h('div', { class: 'plan-next' },
+          next ? h('span', { class: 'mode-card plan-card mode-' + next.id }, h('span', { class: 'mode-art', html: next.art() }), groupOf(State.group).reads && h('span', { class: 'mode-name' }, next.name))
+            : h('span', { class: 'plan-free', 'aria-label': 'Jogo livre' }, '🎉'),
+          goBtn)),
+    ]);
+    for (const [i, el] of starEls.entries()) {
+      await sleep(i === 0 ? 250 : 350);
+      if (!alive()) return;
+      el.classList.add('show');
+      if (i < p.stars) Sound.chime('star');
+    }
+  },
+};
+Screens.planEnd = {
+  themed: true,
+  render(app) {
+    Sound.chime('open');
+    const done = h('div', { class: 'reward' }, h('div', { class: 'plan-free big' }, '🎉'),
+      h('div', { class: 'reward-actions' }, iconBtn('🏠', 'Voltar ao menu', () => go('menu')), iconBtn('📖', 'Ver o álbum', () => go('album'))));
+    app.append(done);
+    setTimeout(() => burst(done.firstChild, ['🎉', '⭐', '✨', '🎈']), 200);
+  },
+};
+
+/* ---------- aba "Plano de sessão" ---------- */
+FonoTabs.push({ id: 'plano', label: 'Plano de sessão', icon: '📋', order: 1.5, render: renderPlanTab });
+
+async function renderPlanTab(el) {
+  const kids = await allChildren();
+  if (!kids.length) {
+    add(el, [h('h2', null, 'Plano de sessão'), h('p', { class: 'empty' }, 'Cadastre uma criança em “Crianças” para montar um plano.')]);
+    return;
+  }
+  let childId = State.child && kids.some(k => k.id === State.child.id) ? State.child.id : kids[0].id;
+  const sel = h('select', { class: 'input' }, kids.map(k => h('option', { value: k.id }, `${k.avatar} ${k.nick} (${groupOf(k.group).name})`)));
+  sel.value = childId;
+  sel.onchange = () => { childId = sel.value; draw(); };
+  const box = h('div');
+  add(el, [
+    h('h2', null, 'Plano de sessão'),
+    h('p', { class: 'muted' }, 'Monte a sequência da sessão. Ao começar, o jogo passa de uma atividade para a outra sem voltar ao menu (entre elas, só as estrelas e um botão ▶). Na duração em minutos, a atividade termina na primeira tentativa depois do tempo, sem relógio na tela.'),
+    h('label', { class: 'field inline' }, h('span', null, 'Criança'), sel),
+    box,
+  ]);
+
+  async function draw() {
+    const kid = kids.find(k => k.id === childId);
+    const plan = (await getPlan(childId)) || { steps: [] };
+    const steps = plan.steps.slice();
+    const save = async () => { await DB.setKv('plan:' + childId, steps.length ? { steps } : null); draw(); };
+    const rows = steps.map((st, i) => {
+      const def = ACTIVITIES[st.act];
+      const dur = h('select', { class: 'input small-select' }, h('option', { value: '' }, 'rodada inteira'), [2, 3, 5, 8, 10].map(m => h('option', { value: m }, `${m} min`)));
+      dur.value = st.minutes ? String(st.minutes) : '';
+      dur.disabled = st.act === PLAN_FREE;
+      dur.onchange = () => { st.minutes = dur.value ? +dur.value : null; save(); };
+      const mv = (d) => () => { const j = i + d; if (j < 0 || j >= steps.length) return; [steps[i], steps[j]] = [steps[j], steps[i]]; save(); };
+      return h('div', { class: 'plan-row' },
+        h('span', { class: 'plan-num' }, String(i + 1)),
+        h('span', { class: 'plan-name' }, st.act === PLAN_FREE ? '🎉 Jogo livre (a criança escolhe no menu)' : def ? `${def.icon} ${def.name}` : st.act),
+        dur,
+        h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Subir', onclick: mv(-1) }, '↑'),
+        h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Descer', onclick: mv(1) }, '↓'),
+        h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Tirar', onclick: () => { steps.splice(i, 1); save(); } }, '🗑️'));
+    });
+    const addSel = h('select', { class: 'input' }, actIds().map(id => h('option', { value: id }, `${ACTIVITIES[id].icon} ${ACTIVITIES[id].name}`)), h('option', { value: PLAN_FREE }, '🎉 Jogo livre'));
+    const addDur = h('select', { class: 'input small-select' }, h('option', { value: '' }, 'rodada inteira'), [2, 3, 5, 8, 10].map(m => h('option', { value: m }, `${m} min`)));
+    box.replaceChildren(
+      h('div', { class: 'plan-list' }, rows.length ? rows : h('p', { class: 'empty' }, 'Nenhum plano para esta criança ainda.')),
+      h('div', { class: 'row wrap plan-add' }, addSel, addDur,
+        h('button', { class: 'btn small', type: 'button', onclick: () => { steps.push({ act: addSel.value, minutes: addSel.value === PLAN_FREE || !addDur.value ? null : +addDur.value }); save(); } }, '➕ Acrescentar')),
+      h('div', { class: 'row wrap' },
+        h('button', {
+          class: 'btn small', type: 'button',
+          onclick: async () => { const t = await planTemplate(kid); steps.splice(0, steps.length, ...t.steps); save(); },
+        }, '✨ Modelo: aquecimento 3 min → atividade do degrau atual → jogo livre'),
+        steps.length > 0 && h('button', { class: 'btn small ghost', type: 'button', onclick: () => { steps.splice(0); save(); } }, 'Limpar')),
+      steps.length > 0 && h('button', { class: 'btn primary big-start', type: 'button', onclick: () => { AudioEngine.unlock(); startPlan(kid, { steps }); } }, `▶ Começar a sessão de ${kid.nick} agora`),
+      h('p', { class: 'muted small' }, 'A criança também pode começar o plano pelo botão 📋 no menu dela.'));
+  }
+  await draw();
+}
+
 /* ---------- missões: pontos, patentes e insígnias ---------- */
 const RANKS = [
   { min: 0, name: 'Detetive Júnior', icon: '🔎' },
@@ -5156,16 +5306,103 @@ function summaryDetail(a) {
   return '';
 }
 
+/* ---------- relatório por posição do som e por nível/degrau (versão 3) ---------- */
+const POS_ORDER = ['inicio', 'meio', 'fim'];
+const POS_COLORS = { inicio: '#2a9d8f', meio: '#e9a23b', fim: '#8e6cd1' };
+/** Uma entrada por posição treinada: em "Onde mora o som?" cada espaço conta separado. */
+function posEntries(trials) {
+  const out = [];
+  for (const t of trials) {
+    if (t.slots) t.slots.forEach(sl => out.push({ pos: sl.pos, correct: sl.ok, contrast: t.contrast }));
+    else if (t.pos) out.push({ pos: t.pos, correct: t.correct, contrast: t.contrast });
+    else if (t.pairId && Bank.get(t.pairId)) out.push({ pos: pairPos(Bank.get(t.pairId)), correct: t.correct, contrast: t.contrast });   // sessões antigas
+  }
+  return out;
+}
+const rateOf = es => ({ hit: es.filter(e => e.correct).length, tot: es.length });
+function positionSection(ss) {
+  const all = posEntries(ss.flatMap(s => s.trials));
+  if (!all.length) return null;
+  const cs = CONTRAST_ORDER.filter(c => all.some(e => e.contrast === c));
+  const cell = es => (es.length ? h('td', { class: 'num' }, pctCell(rateOf(es)), h('span', { class: 'muted small' }, ` (${es.length})`)) : h('td', { class: 'num' }, '—'));
+  const table = h('table', { class: 'data' },
+    h('thead', null, h('tr', null, h('th', null, 'Contraste'), POS_ORDER.map(p => h('th', { class: 'num' }, POS_LABEL[p])))),
+    h('tbody', null,
+      h('tr', null, h('td', null, h('strong', null, 'Todos')), POS_ORDER.map(p => cell(all.filter(e => e.pos === p)))),
+      cs.map(c => h('tr', null, h('td', null, contrastChip(c)), POS_ORDER.map(p => cell(all.filter(e => e.contrast === c && e.pos === p)))))));
+  const per = ss.map(s => posEntries(s.trials)).map((es, i) => ({ es, s: ss[i] })).filter(x => x.es.length);
+  const series = POS_ORDER.filter(p => all.some(e => e.pos === p)).map(p => ({
+    name: POS_LABEL[p], color: POS_COLORS[p],
+    values: per.map(x => { const es = x.es.filter(e => e.pos === p); return es.length ? rateOf(es).hit / es.length : null; }),
+  }));
+  return [
+    h('h3', null, 'Por posição do som (início, meio, fim)'),
+    h('p', { class: 'muted small' }, 'Nas atividades de pares, a posição é onde o par difere (pote/bote = início; nata/nada = fim). Em “Onde mora o som?” cada lugar da palavra conta separado.'),
+    h('div', { class: 'table-wrap' }, table),
+    per.length > 1 && h('div', { class: 'chart-box', html: lineChart(series, per.map(x => fmtShortDate(x.s.date))) }),
+    per.length > 1 && h('div', { class: 'legend' }, series.map(se => h('span', { class: 'legend-item' }, h('span', { class: 'legend-dot', style: `background:${se.color}` }), se.name))),
+  ];
+}
+function levelSection(ss) {
+  const trials = ss.flatMap(s => s.trials.map(t => ({ ...t, mode: s.mode })));
+  const bySteps = LADDER.map(L => ({ L, es: trials.filter(t => (t.step || stepOf(ACTIVITIES[t.mode], t.lvl)) === L.step) })).filter(x => x.es.length);
+  const byLevel = Object.values(ACTIVITIES).filter(d => d.levels && trials.some(t => t.mode === d.id && t.lvl));
+  if (!bySteps.length && !byLevel.length) return null;
+  return [
+    h('h3', null, 'Por degrau da escada'),
+    bySteps.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Degrau'), h('th', { class: 'num' }, 'Tentativas'), h('th', { class: 'num' }, 'Acerto'))),
+      h('tbody', null, bySteps.map(x => h('tr', null, h('td', null, `${x.L.step}. ${x.L.name}`), h('td', { class: 'num' }, x.es.length), h('td', { class: 'num' }, pctCell(rateOf(x.es)))))))) : null,
+    byLevel.length > 0 && h('h3', null, 'Por nível de cada atividade'),
+    byLevel.length > 0 && h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Atividade'), [1, 2, 3, 4].map(l => h('th', { class: 'num' }, `Nível ${l}`)))),
+      h('tbody', null, byLevel.map(d => h('tr', null, h('td', null, `${d.icon} ${d.name}`),
+        [1, 2, 3, 4].map(l => {
+          const es = trials.filter(t => t.mode === d.id && t.lvl === l);
+          return h('td', { class: 'num', title: d.levels[l - 1] || '' }, l > d.levels.length ? '' : es.length ? [pctCell(rateOf(es)), h('span', { class: 'muted small' }, ` (${es.length})`)] : '—');
+        })))))),
+  ];
+}
+function productionSection(ss) {
+  const ts = ss.flatMap(s => s.trials).filter(t => t.production);
+  if (!ts.length) return null;
+  const by = {};
+  ts.forEach(t => { const r = by[t.itemKey] || (by[t.itemKey] = { word: t.item, contrast: t.contrast, certo: 0, distorcido: 0, errado: 0 }); r[t.production]++; });
+  return [
+    h('h3', null, '🎤 Produção (Eu falo, você ouve)'),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Contraste'), h('th', null, 'Palavra'), ...Object.values(PROD_MARKS).map(m => h('th', { class: 'num' }, `${m.icon} ${m.label}`)))),
+      h('tbody', null, Object.values(by).map(r => h('tr', null, h('td', null, CONTRASTS[r.contrast] ? contrastChip(r.contrast) : '—'), h('td', null, r.word),
+        h('td', { class: 'num' }, r.certo), h('td', { class: 'num' }, r.distorcido), h('td', { class: 'num' }, r.errado)))))),
+  ];
+}
+function drawingsSection(ss) {
+  const ts = ss.flatMap(s => s.trials.filter(t => t.drawing).map(t => ({ ...t, date: s.date })));
+  if (!ts.length) return null;
+  return [
+    h('h3', null, '✍️ Desenhos do Som secreto'),
+    h('div', { class: 'drawings' }, ts.slice(-40).reverse().map(t => h('figure', { class: 'drawing' + (t.correct ? ' ok' : ' no') },
+      h('img', { src: t.drawing, alt: 'desenho da letra para ' + t.item }),
+      h('figcaption', null, `${t.item} → ${t.expected} ${t.correct ? '✓' : '✗'}`, h('br'), h('span', { class: 'muted small' }, fmtShortDate(t.date)))))),
+  ];
+}
+
 function exportCsv(sessions, base, nickOf) {
   const head = ['data', 'hora', 'crianca', 'faixa', 'atividade', 'sessao_completa', 'contraste', 'par_ou_item', 'tentativas', 'acertos', 'erros',
-    'percentual_acerto', 'vezes_que_ouviu_de_novo', 'voz_sintetica', 'nivel_tipo', 'nivel_inicial', 'nivel_final', 'nivel_maximo', 'sequencia_max_certa', 'acertos_em_60s'];
+    'percentual_acerto', 'vezes_que_ouviu_de_novo', 'voz_sintetica', 'nivel_tipo', 'nivel_inicial', 'nivel_final', 'nivel_maximo', 'sequencia_max_certa', 'acertos_em_60s',
+    'nivel_atividade', 'degrau', 'posicao_do_som', 'producao', 'minutos_no_plano'];
   const rows = [];
   for (const s of sessions.map(normSession).sort((a, b) => a.date.localeCompare(b.date))) {
     const d = new Date(s.date);
     const byItem = {};
     for (const t of s.trials) {
       const k = trialKey(t);
-      const p = byItem[k] || (byItem[k] = { contrast: t.contrast, words: trialLabel(t), hit: 0, tot: 0, replays: 0, tts: false, seq: null });
+      const p = byItem[k] || (byItem[k] = { contrast: t.contrast, words: trialLabel(t), hit: 0, tot: 0, replays: 0, tts: false, seq: null, lvl: new Set(), step: new Set(), pos: new Set(), prod: {} });
+      if (t.lvl) p.lvl.add(t.lvl);
+      const stp = t.step || stepOf(ACTIVITIES[s.mode], t.lvl);
+      if (stp) p.step.add(stp);
+      posEntries([t]).forEach(e => p.pos.add(POS_LABEL[e.pos]));
+      if (t.production) p.prod[t.production] = (p.prod[t.production] || 0) + 1;
       p.tot++;
       if (t.correct) { p.hit++; if (t.seqLen) p.seq = Math.max(p.seq || 0, t.seqLen); }
       p.replays += t.replays || 0;
@@ -5180,6 +5417,7 @@ function exportCsv(sessions, base, nickOf) {
         CONTRASTS[p.contrast] ? CONTRASTS[p.contrast].short : '', p.words, p.tot, p.hit, p.tot - p.hit, pct(p.hit, p.tot),
         p.replays, p.tts ? 'sim' : 'não',
         info ? info.name : '', a ? a.start : '', a ? a.end : '', a ? a.max : '', p.seq || '', s.timed ? s.score || 0 : '',
+        [...p.lvl].join('/'), [...p.step].join('/'), [...p.pos].join('/'), Object.entries(p.prod).map(([m, n]) => `${m}:${n}`).join(' '), s.minutes || '',
       ]);
     }
   }
@@ -5337,6 +5575,10 @@ async function renderProgressTab(el) {
       legend,
       modeF === 'all' && h('h3', null, 'Por atividade'),
       modeF === 'all' && h('div', { class: 'table-wrap' }, actTable),
+      positionSection(ss),
+      levelSection(ss),
+      productionSection(ss),
+      drawingsSection(ss),
       modeF !== 'all' && sums[0] && summaryDetail(sums[0]) && h('p', { class: 'level-summary' }, h('strong', null, summaryDetail(sums[0]))),
       itemTable && h('h3', null, modeF === 'all' ? 'Acerto por par em cada atividade' : 'Acerto por par / item'),
       itemTable && h('div', { class: 'table-wrap' }, itemTable),
