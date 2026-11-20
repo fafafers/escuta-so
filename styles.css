@@ -970,3 +970,84 @@ table.data .num { text-align: right; }
 .act-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .act-text .badge { align-self: flex-start; }
 .group-settings { border-top: 2px solid var(--line); margin-top: 18px; }
+
+/* ---------- Pequenos Ouvintes: atividades novas ---------- */
+.mode-rhyme { background: #ffe4ec; }
+.mode-claps { background: #fff1d6; }
+.mode-onset { background: #e6f0ff; }
+.mode-sounds { background: #e3f6d6; }
+.mode-memory { background: #efe8fb; }
+.art-claps { display: flex; align-items: center; gap: 10px; }
+.beat-mini { display: flex; gap: 6px; }
+.beat-mini i { width: clamp(14px, 2.6vmin, 22px); height: clamp(14px, 2.6vmin, 22px); border-radius: 50%; background: var(--orange); }
+.art-memory { display: flex; align-items: flex-end; gap: 6px; }
+.art-memory .mini-card { width: clamp(52px, 10vmin, 86px); height: clamp(52px, 10vmin, 86px); font-size: clamp(30px, 6vmin, 54px); }
+.art-memory .peek { transform: translateY(-14px) rotate(-8deg); }
+
+.model-row { display: flex; align-items: center; justify-content: center; gap: 2vmin; }
+.model-card { width: clamp(110px, 24vmin, 210px); height: clamp(110px, 24vmin, 210px); background: #fff8e1; box-shadow: 0 0 0 6px rgba(255, 190, 11, .35), var(--shadow); }
+.model-card .fig-emoji { font-size: clamp(70px, 15vmin, 140px); }
+.model-card.speaking { transform: scale(1.07); box-shadow: 0 0 0 12px rgba(255, 190, 11, .55), var(--shadow); }
+.model-ear { width: clamp(46px, 8vmin, 70px); color: var(--orange); }
+.model-ear svg { width: 100%; height: auto; display: block; }
+.cards.three { gap: 4vmin; }
+.cards.three .fig-card { width: clamp(110px, 25vmin, 230px); height: clamp(110px, 25vmin, 230px); }
+.cards.three .fig-card .fig-emoji { font-size: clamp(70px, 16vmin, 150px); }
+.cards.four { gap: 3vmin; }
+.fig-card.small { width: clamp(96px, 19vmin, 180px); height: clamp(96px, 19vmin, 180px); }
+.fig-card.small .fig-emoji { font-size: clamp(60px, 12vmin, 112px); }
+.stage-rhyme, .stage-onset, .stage-claps, .stage-memory { gap: 3.5vmin; }
+
+/* bate palminhas */
+.claps-row { display: flex; align-items: center; gap: 5vmin; }
+.drum {
+  width: clamp(150px, 30vmin, 260px);
+  height: clamp(150px, 30vmin, 260px);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, #fff, #ffe7c2);
+  box-shadow: 0 8px 0 #e3a04d, var(--shadow);
+  display: grid;
+  place-items: center;
+}
+.drum-face { font-family: var(--emoji); font-size: clamp(90px, 18vmin, 160px); line-height: 1; }
+.drum.hit { animation: drum-hit .18s ease-out; }
+@keyframes drum-hit { 50% { transform: scale(.92) translateY(6px); box-shadow: 0 2px 0 #e3a04d; } }
+.claps-ok, .claps-undo {
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--emoji);
+  line-height: 1;
+  box-shadow: var(--shadow-sm);
+}
+.claps-ok { width: clamp(96px, 17vmin, 140px); height: clamp(96px, 17vmin, 140px); font-size: clamp(54px, 9vmin, 80px); background: #dff5e6; }
+.claps-undo { width: 84px; height: 84px; font-size: 40px; background: var(--card); }
+.claps-ok:disabled, .claps-undo:disabled { opacity: .35; }
+.beats { display: flex; gap: 14px; min-height: 44px; align-items: center; justify-content: center; }
+.beat { width: 40px; height: 40px; border-radius: 50%; background: var(--orange); box-shadow: 0 4px 0 #c96a00; animation: pop-in .35s cubic-bezier(.3, 1.6, .5, 1); }
+.beat.demo { background: var(--teal); box-shadow: 0 4px 0 #1f9086; }
+
+/* que som é esse? */
+.sound-bubble { color: var(--blue); }
+
+/* o bicho sumiu */
+.bushes { display: flex; gap: 4vmin; }
+.bush {
+  width: clamp(100px, 20vmin, 170px);
+  height: clamp(100px, 20vmin, 170px);
+  border-radius: 50%;
+  background: #e3f6d6;
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow-sm);
+  transition: transform .2s, box-shadow .2s;
+}
+.bush-leaf, .bush .fig-emoji { font-family: var(--emoji); font-size: clamp(64px, 13vmin, 110px); line-height: 1; }
+.bush.speaking { transform: scale(1.12); box-shadow: 0 0 0 10px rgba(46, 196, 182, .35), var(--shadow); }
+.bush.speaking .bush-leaf { animation: shake .25s ease-in-out infinite alternate; }
+@keyframes shake { from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }
+.bush.filled { background: #fff; }
+.pop { animation: pop-in .4s cubic-bezier(.3, 1.6, .5, 1); }
+
+/* nada de texto para os pequenos */
+[data-theme="kids"] .level-chip { display: none; }

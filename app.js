@@ -797,8 +797,7 @@ const Sound = {
     await AudioEngine.resume();
     const buf = it.key && Bank.recorded.has(it.key) ? await this.buffer(it.key) : null;
     if (buf && AudioEngine.ctx) { await this.playBuffer(buf, fx); return false; }
-    if (it.synth && AudioEngine.ctx && typeof Synth !== 'undefined') { await Synth.play(it.synth); return false; }
-    if (it.custom) { await it.custom(); return !!it.customTts; }
+    if (it.synth && AudioEngine.ctx) { await Synth.play(it.synth); return false; }
     await this.speakWithFx(it.text, fx);
     return true;
   },
@@ -1605,6 +1604,556 @@ Object.assign(ACTIVITIES, {
       return {
         ...baseResult(pair), stim: target, expected: pair[target].text, answer: pair[sides[idx]].text,
         correct, replays: Math.max(0, replays), interaction: dropped ? 'arrastou' : 'tocou',
+      };
+    },
+  },
+});
+
+/* =========================================================================
+ * 3b. PEQUENOS OUVINTES: ATIVIDADES NOVAS
+ * ========================================================================= */
+
+/* ---------- sons não verbais, sintetizados com Web Audio ----------
+ * Cada som pode ser substituído por uma gravação da fono (chave "snd:<id>"). */
+const SOUNDS = {
+  dog: { name: 'cachorro', emoji: '🐶', tts: 'au au', animal: true },
+  cat: { name: 'gato', emoji: '🐱', tts: 'miau', animal: true },
+  cow: { name: 'vaca', emoji: '🐮', tts: 'muuu', animal: true },
+  duck: { name: 'pato', emoji: '🦆', tts: 'quá quá', animal: true },
+  bird: { name: 'passarinho', emoji: '🐦', tts: 'piu piu', animal: true },
+  horn: { name: 'buzina', emoji: '🚗', tts: 'bi bi' },
+  bell: { name: 'sino', emoji: '🔔', tts: 'dlim dlom' },
+  rain: { name: 'chuva', emoji: '🌧️', tts: 'chuá' },
+  phone: { name: 'telefone', emoji: '☎️', tts: 'trim trim' },
+};
+const ANIMALS = Object.keys(SOUNDS).filter(id => SOUNDS[id].animal);
+const soundItem = id => ({ key: 'snd:' + id, text: SOUNDS[id].tts, synth: id });
+
+const Synth = {
+  noiseBuf: null,
+  noise(ctx) {
+    if (!this.noiseBuf) {
+      const n = ctx.sampleRate * 2;
+      this.noiseBuf = ctx.createBuffer(1, n, ctx.sampleRate);
+      const d = this.noiseBuf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    return src;
+  },
+  /** Envelope: sobe em `a` segundos até `peak`, fica até `hold` e cai até `end`. */
+  env(param, t, a, peak, hold, end) {
+    param.setValueAtTime(0.0001, t);
+    param.exponentialRampToValueAtTime(peak, t + a);
+    param.setValueAtTime(peak, t + hold);
+    param.exponentialRampToValueAtTime(0.0001, t + end);
+  },
+  /** Fonte "vocal": oscilador → filtros de formante → envelope. */
+  voice(ctx, out, t, { type = 'sawtooth', f0, formants, a = 0.02, hold, end, peak = 0.35 }) {
+    const o = ctx.createOscillator();
+    o.type = type;
+    f0(o.frequency, t);
+    const g = ctx.createGain();
+    this.env(g.gain, t, a, peak, hold, end);
+    formants.forEach(([f, q, lvl, sweep]) => {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.Q.value = q;
+      if (sweep) sweep(bp.frequency, t); else bp.frequency.value = f;
+      const fg = ctx.createGain();
+      fg.gain.value = lvl;
+      o.connect(bp);
+      bp.connect(fg);
+      fg.connect(g);
+    });
+    g.connect(out);
+    o.start(t);
+    o.stop(t + end + 0.05);
+    return o;
+  },
+  defs: {
+    dog(ctx, out, t) {
+      [0, 0.34].forEach(dt => {
+        Synth.voice(ctx, out, t + dt, {
+          f0: (p, s) => { p.setValueAtTime(560, s); p.exponentialRampToValueAtTime(280, s + 0.17); },
+          formants: [[900, 1.4, 1], [2200, 3, 0.4]], a: 0.008, hold: 0.04, end: 0.2, peak: 0.6,
+        });
+        const n = Synth.noise(ctx);
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass'; bp.frequency.value = 1600; bp.Q.value = 1;
+        const g = ctx.createGain();
+        Synth.env(g.gain, t + dt, 0.004, 0.25, 0.01, 0.06);
+        n.connect(bp); bp.connect(g); g.connect(out);
+        n.start(t + dt); n.stop(t + dt + 0.08);
+      });
+      return 0.62;
+    },
+    cat(ctx, out, t) {
+      Synth.voice(ctx, out, t, {
+        f0: (p, s) => { p.setValueAtTime(430, s); p.linearRampToValueAtTime(760, s + 0.28); p.linearRampToValueAtTime(480, s + 0.8); },
+        formants: [
+          [0, 3, 1, (p, s) => { p.setValueAtTime(700, s); p.linearRampToValueAtTime(2000, s + 0.22); p.linearRampToValueAtTime(850, s + 0.75); }],
+          [2800, 5, 0.25],
+        ],
+        a: 0.06, hold: 0.6, end: 0.85, peak: 0.55,
+      });
+      return 0.9;
+    },
+    cow(ctx, out, t) {
+      Synth.voice(ctx, out, t, {
+        f0: (p, s) => { p.setValueAtTime(118, s); p.linearRampToValueAtTime(128, s + 0.4); p.linearRampToValueAtTime(96, s + 1.2); },
+        formants: [[300, 1.2, 1.2], [650, 2.5, 0.6]],
+        a: 0.18, hold: 0.9, end: 1.3, peak: 0.7,
+      });
+      return 1.35;
+    },
+    duck(ctx, out, t) {
+      [0, 0.24].forEach(dt => Synth.voice(ctx, out, t + dt, {
+        type: 'square',
+        f0: (p, s) => { p.setValueAtTime(300, s); p.exponentialRampToValueAtTime(220, s + 0.15); },
+        formants: [[1100, 6, 1], [2500, 6, 0.6]], a: 0.01, hold: 0.06, end: 0.17, peak: 0.6,
+      }));
+      return 0.48;
+    },
+    bird(ctx, out, t) {
+      const chirp = (s, f1, f2, d) => {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(f1, s);
+        o.frequency.exponentialRampToValueAtTime(f2, s + d);
+        const g = ctx.createGain();
+        Synth.env(g.gain, s, 0.01, 0.3, d * 0.6, d);
+        o.connect(g); g.connect(out);
+        o.start(s); o.stop(s + d + 0.02);
+      };
+      [0, 0.15, 0.3].forEach(dt => chirp(t + dt, 2600, 4300, 0.09));
+      [0.5, 0.56, 0.62, 0.68].forEach(dt => chirp(t + dt, 3800, 3300, 0.045));
+      return 0.78;
+    },
+    horn(ctx, out, t) {
+      [[0, 0.32], [0.46, 0.9]].forEach(([s, e]) => [392, 494].forEach(f => {
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.value = f;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass'; lp.frequency.value = 2200;
+        const g = ctx.createGain();
+        Synth.env(g.gain, t + s, 0.02, 0.16, e - s - 0.03, e - s);
+        o.connect(lp); lp.connect(g); g.connect(out);
+        o.start(t + s); o.stop(t + e + 0.02);
+      }));
+      return 0.95;
+    },
+    bell(ctx, out, t) {
+      [[0, 660], [0.75, 523]].forEach(([dt, base]) => [[1, 0.5, 2.2], [2, 0.25, 1.4], [2.4, 0.2, 1.1], [3, 0.12, 0.9], [4.5, 0.08, 0.6]].forEach(([m, lvl, dec]) => {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.value = base * m;
+        const g = ctx.createGain();
+        Synth.env(g.gain, t + dt, 0.003, lvl, 0.004, dec);
+        o.connect(g); g.connect(out);
+        o.start(t + dt); o.stop(t + dt + dec + 0.05);
+      }));
+      return 2.4;
+    },
+    rain(ctx, out, t) {
+      const dur = 2.2;
+      const n = Synth.noise(ctx);
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 700;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 7000;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.2, t + 0.5);
+      g.gain.setValueAtTime(0.2, t + dur - 0.6);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      n.connect(hp); hp.connect(lp); lp.connect(g); g.connect(out);
+      n.start(t); n.stop(t + dur + 0.05);
+      for (let i = 0; i < 28; i++) {
+        const s = t + 0.2 + Math.random() * (dur - 0.5);
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(1800 + Math.random() * 2500, s);
+        o.frequency.exponentialRampToValueAtTime(900, s + 0.03);
+        const dg = ctx.createGain();
+        Synth.env(dg.gain, s, 0.002, 0.06 + Math.random() * 0.08, 0.004, 0.035);
+        o.connect(dg); dg.connect(out);
+        o.start(s); o.stop(s + 0.05);
+      }
+      return dur;
+    },
+    phone(ctx, out, t) {
+      [0, 0.6].forEach(dt => {
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        const trem = ctx.createOscillator();
+        trem.frequency.value = 22;
+        const tg = ctx.createGain();
+        tg.gain.value = 0.1;
+        trem.connect(tg); tg.connect(g.gain);
+        [1150, 1450].forEach(f => {
+          const o = ctx.createOscillator();
+          o.type = 'triangle';
+          o.frequency.value = f;
+          const og = ctx.createGain();
+          Synth.env(og.gain, t + dt, 0.01, 1, 0.38, 0.42);
+          o.connect(og); og.connect(g);
+          o.start(t + dt); o.stop(t + dt + 0.45);
+        });
+        g.connect(out);
+        trem.start(t + dt); trem.stop(t + dt + 0.45);
+      });
+      return 1.05;
+    },
+    drum(ctx, out, t) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(150, t);
+      o.frequency.exponentialRampToValueAtTime(55, t + 0.18);
+      const g = ctx.createGain();
+      Synth.env(g.gain, t, 0.003, 0.9, 0.01, 0.22);
+      o.connect(g); g.connect(out);
+      o.start(t); o.stop(t + 0.25);
+      return 0.22;
+    },
+  },
+  /** Toca um som sintetizado e espera terminar (Sound.stop() interrompe). */
+  play(id) {
+    const ctx = AudioEngine.ensure();
+    const def = this.defs[id];
+    if (!ctx || !def) return sleep(300);
+    const bus = ctx.createGain();
+    bus.connect(AudioEngine.master);
+    const dur = def(ctx, bus, ctx.currentTime + 0.03);
+    const handle = { stop: () => { try { bus.disconnect(); } catch (_) { /* ok */ } } };
+    Sound.sources.add(handle);
+    return new Promise(resolve => setTimeout(() => { Sound.sources.delete(handle); handle.stop(); resolve(); }, dur * 1000 + 80));
+  },
+  /** Batida curta (não espera). */
+  tap(id = 'drum') {
+    const ctx = AudioEngine.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const bus = ctx.createGain();
+    bus.connect(AudioEngine.master);
+    this.defs[id](ctx, bus, ctx.currentTime + 0.01);
+    setTimeout(() => { try { bus.disconnect(); } catch (_) { /* ok */ } }, 600);
+  },
+};
+
+/* ---------- palavras das atividades (gravadas pela fono com a chave "w:<palavra>") ---------- */
+function wordKey(text) {
+  return 'w:' + text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+const W = (text, emoji) => ({ text, emoji });
+const wordItem = w => ({ key: wordKey(w.text), text: w.text });
+const wordFig = w => h('span', { class: 'fig-emoji', 'aria-hidden': 'true' }, w.emoji);
+
+const RHYME_SETS = [
+  { model: W('pão', '🍞'), match: W('mão', '✋'), others: [W('bola', '⚽'), W('gato', '🐱')] },
+  { model: W('gato', '🐱'), match: W('pato', '🦆'), others: [W('sol', '☀️'), W('casa', '🏠')] },
+  { model: W('janela', '🪟'), match: W('panela', '🍲'), others: [W('carro', '🚗'), W('uva', '🍇')] },
+  { model: W('rato', '🐭'), match: W('sapato', '👞'), others: [W('lua', '🌙'), W('bola', '⚽')] },
+  { model: W('cão', '🐶'), match: W('avião', '✈️'), others: [W('pé', '🦶'), W('flor', '🌸')] },
+  { model: W('chinelo', '🩴'), match: W('martelo', '🔨'), others: [W('uva', '🍇'), W('sol', '☀️')] },
+  { model: W('abelha', '🐝'), match: W('orelha', '👂'), others: [W('peixe', '🐟'), W('mesa', '🪑')] },
+  { model: W('bota', '👢'), match: W('gota', '💧'), others: [W('casa', '🏠'), W('dado', '🎲')] },
+  { model: W('foguete', '🚀'), match: W('sorvete', '🍦'), others: [W('bola', '⚽'), W('gato', '🐱')] },
+  { model: W('estrela', '⭐'), match: W('vela', '🕯️'), others: [W('sapo', '🐸'), W('uva', '🍇')] },
+];
+/* Mesmo começo: sons-alvo /p/ /b/ /t/ /d/; um dos distratores sempre começa com o par do som. */
+const ONSET_SETS = [
+  { contrast: 'pb', model: W('bola', '⚽'), match: W('boné', '🧢'), others: [W('pato', '🦆'), W('dado', '🎲')] },
+  { contrast: 'pb', model: W('pato', '🦆'), match: W('pipoca', '🍿'), others: [W('banana', '🍌'), W('tomate', '🍅')] },
+  { contrast: 'td', model: W('tomate', '🍅'), match: W('tartaruga', '🐢'), others: [W('dado', '🎲'), W('pipoca', '🍿')] },
+  { contrast: 'td', model: W('dado', '🎲'), match: W('dente', '🦷'), others: [W('tênis', '👟'), W('bola', '⚽')] },
+  { contrast: 'pb', model: W('banana', '🍌'), match: W('bota', '👢'), others: [W('pera', '🍐'), W('dinossauro', '🦕')] },
+  { contrast: 'pb', model: W('peixe', '🐟'), match: W('pé', '🦶'), others: [W('boné', '🧢'), W('tesoura', '✂️')] },
+  { contrast: 'td', model: W('tesoura', '✂️'), match: W('telefone', '☎️'), others: [W('dedo', '☝️'), W('pipoca', '🍿')] },
+  { contrast: 'td', model: W('dinossauro', '🦕'), match: W('dedo', '☝️'), others: [W('tomate', '🍅'), W('bola', '⚽')] },
+];
+const CLAP_WORDS = [
+  [W('pão', '🍞'), 1], [W('sol', '☀️'), 1], [W('flor', '🌸'), 1], [W('mar', '🌊'), 1], [W('trem', '🚂'), 1],
+  [W('gato', '🐱'), 2], [W('bola', '⚽'), 2], [W('casa', '🏠'), 2], [W('uva', '🍇'), 2], [W('peixe', '🐟'), 2],
+  [W('banana', '🍌'), 3], [W('sapato', '👞'), 3], [W('macaco', '🐒'), 3], [W('cavalo', '🐴'), 3], [W('panela', '🍲'), 3],
+  [W('borboleta', '🦋'), 4], [W('abacaxi', '🍍'), 4], [W('telefone', '☎️'), 4], [W('bicicleta', '🚲'), 4], [W('melancia', '🍉'), 4],
+];
+/** Todas as palavras avulsas de uma lista de conjuntos, sem repetir (para a aba de gravação). */
+function uniqueWords(list) {
+  const seen = new Map();
+  for (const w of list) if (!seen.has(wordKey(w.text))) seen.set(wordKey(w.text), w);
+  return [...seen.values()];
+}
+const ACTIVITY_WORDS = {
+  rhyme: () => uniqueWords(RHYME_SETS.flatMap(s => [s.model, s.match, ...s.others])),
+  onset: () => uniqueWords(ONSET_SETS.flatMap(s => [s.model, s.match, ...s.others])),
+  claps: () => uniqueWords(CLAP_WORDS.map(([w]) => w)),
+};
+
+/** Posições equilibradas para a resposta certa entre k opções. */
+const balancedPositions = (n, k) => shuffle(Array.from({ length: n }, (_, i) => i % k));
+function cycle(list, n) {
+  const out = [];
+  while (out.length < n) {
+    const next = shuffle(list);
+    if (out.length && next[0] === out[out.length - 1] && next.length > 1) next.push(next.shift());
+    out.push(...next);
+  }
+  out.length = n;
+  return out;
+}
+
+/** Modelo + 3 figuras (Qual rima? e Mesmo começo): toca o modelo e depois cada opção. */
+function buildModelTrials(sets, n) {
+  const pos = balancedPositions(n, 3);
+  return cycle(sets, n).map((set, i) => {
+    const options = shuffle(set.others).slice(0, 2);
+    options.splice(pos[i], 0, set.match);
+    return { model: set.model, options, answer: pos[i], contrast: set.contrast || null };
+  });
+}
+async function runModelChoice(trial, g, kind) {
+  const { model, options, answer } = trial;
+  const modelCard = h('button', { class: 'fig-card model-card', type: 'button', 'aria-label': 'Ouvir a palavra' }, wordFig(model));
+  const cards = options.map(w => h('button', { class: 'answer fig-card', type: 'button', 'aria-label': w.text }, wordFig(w)));
+  g.stage.replaceChildren(h('div', { class: 'model-row' }, modelCard, h('span', { class: 'model-ear', 'aria-hidden': 'true', html: SPEAKER_SVG })),
+    h('div', { class: 'cards three' }, cards));
+  const modelStep = () => ({ ...wordItem(model), el: modelCard });
+  let replays = -1;
+  const listen = async () => {
+    replays++;
+    const r = await g.play([modelStep(), ...options.map((w, i) => ({ ...wordItem(w), el: cards[i] }))], 'listen', 700);
+    if (!r.cancelled) g.lock('');
+  };
+  g.replayBtn.onclick = listen;
+  modelCard.onclick = async () => {
+    if (g.stage.dataset.lock) return;
+    const r = await g.play([modelStep()]);
+    if (!r.cancelled) g.lock('');
+  };
+  listen();
+  const idx = await g.choose(cards.map((c, i) => [c, i]));
+  g.endInput([...cards, modelCard]);
+  const correct = idx === answer;
+  if (correct) await celebrate(cards[idx]);
+  else await showCorrection(g, [modelStep(), { ...wordItem(options[answer]), el: cards[answer] }], cards[answer]);
+  return {
+    item: model.text, itemKey: `${kind}:${model.text}`, contrast: trial.contrast, words: model.text,
+    expected: options[answer].text, answer: options[idx].text, correct, replays: Math.max(0, replays),
+  };
+}
+
+const miniCards = (...emojis) => '<span class="art-cards">' + emojis.map(e => `<span class="mini-card">${e}</span>`).join('') + '</span>';
+
+Object.assign(ACTIVITIES, {
+  /* QUAL RIMA?: palavra-modelo e três figuras; uma rima com o modelo. */
+  rhyme: {
+    id: 'rhyme',
+    name: 'Qual rima?',
+    icon: '🎵',
+    desc: 'Consciência fonológica (rima): ouve a palavra-modelo e escolhe, entre três figuras, a que rima.',
+    usesPairs: false,
+    art: () => miniCards('🍞', '✋'),
+    build: (ctx, n) => buildModelTrials(RHYME_SETS, n),
+    run: (trial, g) => runModelChoice(trial, g, 'rhyme'),
+  },
+
+  /* BATE PALMINHAS: toca uma palavra e a criança bate no tambor uma vez por sílaba. */
+  claps: {
+    id: 'claps',
+    name: 'Bate palminhas',
+    icon: '🥁',
+    desc: 'Consciência silábica: ouve a palavra e bate no tambor uma vez por sílaba (1 a 4 sílabas).',
+    usesPairs: false,
+    art: () => '<span class="art-claps"><span class="mini-card">🥁</span><span class="beat-mini"><i></i><i></i><i></i></span></span>',
+    build(ctx, n) {
+      const byCount = [1, 2, 3, 4].map(c => shuffle(CLAP_WORDS.filter(([, s]) => s === c)));
+      const counts = cycle([1, 2, 3, 4], n);
+      const used = [0, 0, 0, 0];
+      return counts.map(c => {
+        const list = byCount[c - 1];
+        const [word, syl] = list[used[c - 1]++ % list.length];
+        return { word, syl };
+      });
+    },
+    async run(trial, g) {
+      const { word, syl } = trial;
+      const wordCard = h('button', { class: 'fig-card model-card', type: 'button', 'aria-label': 'Ouvir a palavra' }, wordFig(word));
+      const drum = h('button', { class: 'answer drum', type: 'button', 'aria-label': 'Tambor' }, h('span', { class: 'drum-face' }, '🥁'));
+      const beats = h('div', { class: 'beats', 'aria-hidden': 'true' });
+      const okBtn = h('button', { class: 'answer claps-ok', type: 'button', 'aria-label': 'Pronto', disabled: true }, '👍');
+      const undoBtn = h('button', { class: 'answer claps-undo', type: 'button', 'aria-label': 'Apagar', disabled: true }, '↩️');
+      g.stage.replaceChildren(
+        h('div', { class: 'model-row' }, wordCard),
+        h('div', { class: 'claps-row' }, undoBtn, drum, okBtn),
+        beats);
+      let taps = 0;
+      const paint = () => {
+        okBtn.disabled = taps === 0;
+        undoBtn.disabled = taps === 0;
+      };
+      const addBeat = () => { const b = h('span', { class: 'beat' }); beats.append(b); return b; };
+      drum.onclick = () => {
+        if (taps >= 8) return;
+        taps++;
+        Synth.tap('drum');
+        drum.classList.remove('hit'); void drum.offsetWidth; drum.classList.add('hit');
+        addBeat();
+        paint();
+      };
+      undoBtn.onclick = () => { if (!taps) return; taps--; beats.lastChild.remove(); paint(); };
+      let replays = -1;
+      const listen = async () => {
+        replays++;
+        const r = await g.play([{ ...wordItem(word), el: wordCard }]);
+        if (!r.cancelled) g.lock('');
+      };
+      g.replayBtn.onclick = listen;
+      wordCard.onclick = () => { if (!g.stage.dataset.lock) listen(); };
+      listen();
+      await g.choose([[okBtn, true]]);
+      const answer = taps;
+      g.endInput([drum, okBtn, undoBtn, wordCard]);
+      const correct = answer === syl;
+      if (correct) {
+        await celebrate(beats);
+      } else {
+        // Mostra o jeito certo: toca a palavra e bate o tambor uma vez por sílaba.
+        await sleep(450);
+        if (!g.alive()) return null;
+        beats.replaceChildren();
+        await g.play([{ ...wordItem(word), el: wordCard }], 'busy');
+        for (let i = 0; i < syl && g.alive(); i++) {
+          await sleep(i ? 520 : 300);
+          Synth.tap('drum');
+          drum.classList.remove('hit'); void drum.offsetWidth; drum.classList.add('hit');
+          addBeat().classList.add('demo');
+        }
+        await sleep(900);
+      }
+      return {
+        item: word.text, itemKey: 'claps:' + word.text, contrast: null, words: word.text,
+        expected: syl, answer, correct, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* MESMO COMEÇO: "qual começa igual a BOLA?" — três figuras, uma com o mesmo som inicial. */
+  onset: {
+    id: 'onset',
+    name: 'Mesmo começo',
+    icon: '🔤',
+    desc: 'Consciência fonêmica (som inicial /p/ /b/ /t/ /d/): escolhe a figura que começa com o mesmo som do modelo; um distrator sempre começa com o par surdo/sonoro.',
+    usesPairs: false,
+    art: () => miniCards('⚽', '🧢'),
+    build: (ctx, n) => buildModelTrials(ONSET_SETS, n),
+    run: (trial, g) => runModelChoice(trial, g, 'onset'),
+  },
+
+  /* QUE SOM É ESSE?: som não verbal (sintetizado ou gravado) e três figuras. */
+  sounds: {
+    id: 'sounds',
+    name: 'Que som é esse?',
+    icon: '🔔',
+    desc: 'Aquecimento e atenção auditiva: reconhece sons não verbais (bichos, buzina, sino, chuva, telefone).',
+    usesPairs: false,
+    art: () => miniCards('🔔', '🐶'),
+    build(ctx, n) {
+      const ids = Object.keys(SOUNDS);
+      const pos = balancedPositions(n, 3);
+      return cycle(ids, n).map((target, i) => {
+        const options = shuffle(ids.filter(x => x !== target)).slice(0, 2);
+        options.splice(pos[i], 0, target);
+        return { target, options };
+      });
+    },
+    async run(trial, g) {
+      const { target, options } = trial;
+      const cards = options.map(id => h('button', { class: 'answer fig-card', type: 'button', 'aria-label': SOUNDS[id].name },
+        h('span', { class: 'fig-emoji', 'aria-hidden': 'true' }, SOUNDS[id].emoji)));
+      const bubble = h('div', { class: 'bubble sound-bubble', html: SPEAKER_SVG });
+      g.stage.replaceChildren(bubble, h('div', { class: 'cards three' }, cards));
+      let replays = -1;
+      const listen = async () => {
+        replays++;
+        const r = await g.play([{ ...soundItem(target), el: bubble }]);
+        if (!r.cancelled) g.lock('');
+      };
+      g.replayBtn.onclick = listen;
+      listen();
+      const idx = await g.choose(cards.map((c, i) => [c, i]));
+      g.endInput(cards);
+      const right = cards[options.indexOf(target)];
+      const correct = options[idx] === target;
+      if (correct) await celebrate(right);
+      else await showCorrection(g, [{ ...soundItem(target), el: right }], right);
+      return {
+        item: SOUNDS[target].name, itemKey: 'snd:' + target, contrast: null, words: SOUNDS[target].name,
+        expected: SOUNDS[target].name, answer: SOUNDS[options[idx]].name, correct, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* O BICHO SUMIU: sequência de 2 ou 3 sons de bichos; a criança toca as figuras na mesma ordem. */
+  memory: {
+    id: 'memory',
+    name: 'O bicho sumiu',
+    icon: '🌳',
+    desc: 'Memória auditiva sequencial: ouve 2 a 3 sons de bichos e toca as figuras na mesma ordem (sobe para 3 com 2 acertos seguidos).',
+    usesPairs: false,
+    art: () => '<span class="art-memory"><span class="mini-card">🌳</span><span class="mini-card peek">🐮</span><span class="mini-card">🌳</span></span>',
+    adaptive: { kind: 'seq', start: 2, min: 2, max: 3, up: 2, down: 2, persist: false, label: l => `${l} bichos` },
+    build: (ctx, n) => Array.from({ length: n }, () => ({})),
+    async run(trial, g) {
+      const len = g.adapt.level;
+      const seq = shuffle(ANIMALS).slice(0, len);
+      const shown = shuffle([...seq, ...shuffle(ANIMALS.filter(a => !seq.includes(a))).slice(0, 4 - len)]);
+      const slots = seq.map(() => h('div', { class: 'bush' }, h('span', { class: 'bush-leaf', 'aria-hidden': 'true' }, '🌳')));
+      const cards = shown.map(id => h('button', { class: 'answer fig-card small', type: 'button', 'aria-label': SOUNDS[id].name },
+        h('span', { class: 'fig-emoji', 'aria-hidden': 'true' }, SOUNDS[id].emoji)));
+      g.stage.replaceChildren(h('div', { class: 'bushes' }, slots), h('div', { class: 'cards four' }, cards));
+      const steps = () => seq.map((id, i) => ({ ...soundItem(id), el: slots[i] }));
+      let replays = -1;
+      const listen = async () => {
+        replays++;
+        slots.forEach(s => s.classList.remove('filled'));
+        const r = await g.play(steps(), 'listen', 450);
+        if (!r.cancelled) g.lock('');
+      };
+      g.replayBtn.onclick = listen;
+      listen();
+      const answer = [];
+      while (answer.length < len) {
+        const idx = await g.choose(cards.map((c, i) => [c, i]));
+        if (idx == null) return null;
+        if (!answer.length) g.replayBtn.onclick = null;   // depois do primeiro toque não dá para ouvir de novo
+        const id = shown[idx];
+        Sound.chime('tap');
+        const slot = slots[answer.length];
+        slot.classList.add('filled');
+        slot.replaceChildren(h('span', { class: 'fig-emoji pop', 'aria-hidden': 'true' }, SOUNDS[id].emoji));
+        answer.push(id);
+      }
+      g.endInput(cards);
+      const correct = answer.every((id, i) => id === seq[i]);
+      if (correct) {
+        await celebrate(slots[slots.length - 1].parentNode);
+      } else {
+        await sleep(600);
+        if (!g.alive()) return null;
+        slots.forEach((s, i) => s.replaceChildren(h('span', { class: 'bush-leaf', 'aria-hidden': 'true' }, '🌳')));
+        await g.play(seq.map((id, i) => ({
+          ...soundItem(id), el: slots[i],
+          onStart: () => { slots[i].classList.add('filled'); slots[i].replaceChildren(h('span', { class: 'fig-emoji pop', 'aria-hidden': 'true' }, SOUNDS[id].emoji)); },
+        })), 'busy', 450);
+        await sleep(900);
+      }
+      return {
+        item: `${len} bichos`, itemKey: 'memory:' + len, contrast: null, words: seq.map(id => SOUNDS[id].name).join(' – '),
+        expected: seq.map(id => SOUNDS[id].name).join('-'), answer: answer.map(id => SOUNDS[id].name).join('-'),
+        correct, seqLen: len, replays: Math.max(0, replays),
       };
     },
   },
