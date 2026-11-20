@@ -759,19 +759,97 @@ const Sound = {
     }
   },
   forget(key) { this.cache.delete(key); },
-  playBuffer(buf) {
+  /** Toca uma gravação. fx (opcional, Detetives do Som), aplicados por código sobre a gravação da fono:
+   *    noise:   { type: 'babble'|'rain'|'party', snr }  ruído de fundo com relação sinal/ruído em dB
+   *    lowpass: frequência de corte em Hz                som abafado
+   *    gate:    { rate, duty }                           cortes curtos de silêncio (duty = fração cortada)
+   *    pan:     -1 (esquerda) … 1 (direita)              um ouvido só */
+  playBuffer(buf, fx = null) {
     return new Promise(resolve => {
       const ctx = AudioEngine.ctx;
+      const t0 = ctx.currentTime + 0.03;
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.connect(AudioEngine.master);
+      let node = src;
+      let lead = 0;
+      let tail = 0;
+      const extra = [];
+      const bus = ctx.createGain();
+      bus.connect(AudioEngine.master);
+      if (fx && fx.lowpass) {
+        for (let i = 0; i < 2; i++) {            // dois filtros em série: corte mais íngreme
+          const f = ctx.createBiquadFilter();
+          f.type = 'lowpass';
+          f.frequency.value = fx.lowpass;
+          f.Q.value = 0.7;
+          node.connect(f);
+          node = f;
+        }
+      }
+      if (fx && fx.gate) {
+        const gg = ctx.createGain();
+        const period = 1 / fx.gate.rate;
+        const off = period * fx.gate.duty;
+        gg.gain.setValueAtTime(1, t0);
+        for (let t = t0 + period - off; t < t0 + buf.duration; t += period) {
+          gg.gain.setValueAtTime(1, t);
+          gg.gain.linearRampToValueAtTime(0, t + 0.004);
+          gg.gain.setValueAtTime(0, t + off - 0.004);
+          gg.gain.linearRampToValueAtTime(1, t + off);
+        }
+        node.connect(gg);
+        node = gg;
+      }
+      if (fx && fx.pan != null) {
+        // ChannelMerger funciona em todos os navegadores (StereoPanner não existe em Safari antigo).
+        const merger = ctx.createChannelMerger(2);
+        node.connect(merger, 0, fx.pan < 0 ? 0 : 1);
+        node = merger;
+      }
+      if (fx && fx.noise) {
+        const g = Math.pow(10, -fx.noise.snr / 20);       // ganho do ruído em relação à fala
+        const scale = Math.min(1, 1.15 / (1 + g));       // abaixa os dois juntos para não distorcer
+        lead = 0.5;
+        tail = 0.35;
+        const ns = NoiseGen.source(ctx, fx.noise.type);
+        const ng = ctx.createGain();
+        ng.gain.setValueAtTime(0.0001, t0);
+        ng.gain.exponentialRampToValueAtTime(g * scale, t0 + 0.15);
+        ng.gain.setValueAtTime(g * scale, t0 + lead + buf.duration + tail - 0.15);
+        ng.gain.exponentialRampToValueAtTime(0.0001, t0 + lead + buf.duration + tail);
+        ns.connect(ng);
+        ng.connect(bus);
+        ns.start(t0, Math.random() * 3);
+        ns.stop(t0 + lead + buf.duration + tail + 0.05);
+        extra.push(ns);
+        const sg = ctx.createGain();
+        sg.gain.value = scale;
+        node.connect(sg);
+        node = sg;
+      }
+      node.connect(bus);
       this.sources.add(src);
+      extra.forEach(x => this.sources.add(x));
       let done = false;
-      const finish = () => { if (done) return; done = true; this.sources.delete(src); resolve(); };
-      src.onended = finish;
-      src.start();
-      setTimeout(finish, buf.duration * 1000 + 600);   // segurança, caso o "ended" não chegue
+      const finish = () => {
+        if (done) return;
+        done = true;
+        this.sources.delete(src);
+        extra.forEach(x => this.sources.delete(x));
+        setTimeout(() => { try { bus.disconnect(); } catch (_) { /* ok */ } }, 200);
+        resolve();
+      };
+      src.start(t0 + lead);
+      setTimeout(finish, (lead + buf.duration + tail) * 1000 + 80);
     });
+  },
+  /** Duas gravações ao mesmo tempo, uma em cada ouvido (escuta dicótica). */
+  async dual(left, right) {
+    await AudioEngine.resume();
+    const [bl, br] = await Promise.all([this.buffer(left.key), this.buffer(right.key)]);
+    if (!bl || !br) return true;
+    await Promise.all([this.playBuffer(bl, { pan: -1 }), this.playBuffer(br, { pan: 1 })]);
+    return false;
   },
   speak(text) {
     return new Promise(resolve => {
@@ -802,7 +880,22 @@ const Sound = {
     return true;
   },
   /** Voz sintética: os efeitos não se aplicam a ela (só o ruído de fundo, tocado junto). */
-  speakWithFx(text, fx) { return this.speak(text); },
+  async speakWithFx(text, fx) {
+    if (!fx || !fx.noise || !AudioEngine.ctx) return this.speak(text);
+    const ctx = AudioEngine.ctx;
+    const ns = NoiseGen.source(ctx, fx.noise.type);
+    const ng = ctx.createGain();
+    ng.gain.value = Math.min(1.2, 0.6 * Math.pow(10, -fx.noise.snr / 20));
+    ns.connect(ng);
+    ng.connect(AudioEngine.master);
+    ns.start();
+    this.sources.add(ns);
+    await sleep(450);
+    await this.speak(text);
+    await sleep(250);
+    try { ns.stop(); } catch (_) { /* ok */ }
+    this.sources.delete(ns);
+  },
   stop() {
     this.token++;
     for (const s of this.sources) { try { s.stop(); } catch (_) { /* ok */ } }
@@ -2345,6 +2438,10 @@ Screens.game = {
       },
     };
 
+    if (def.intro) {                                     // tela de preparo (ex.: "use fone de ouvido")
+      await def.intro(g);
+      if (!g.alive()) return;
+    }
     for (let i = 0; i < trials.length; i++) {
       await sleep(i === 0 ? 500 : 300);
       if (!g.alive()) return;
@@ -2377,6 +2474,881 @@ Screens.game = {
     await DB.put('sessions', session);
     const out = await (Rewards[G.reward] || Rewards.stickers)(child, session, def);
     if (g.alive()) go(out.screen, out.params);
+  },
+};
+
+/* =========================================================================
+ * 3c. DETETIVES DO SOM: ATIVIDADES, MISSÕES E INSÍGNIAS
+ * ========================================================================= */
+
+/* ---------- ruídos de fundo gerados por código (Ruído na escuta) ----------
+ * Cada ruído é gerado uma vez (6 s), normalizado para a mesma energia da fala gravada
+ * (RMS 0,1) e tocado em loop a partir de um ponto sorteado. */
+const NOISE_TYPES = {
+  babble: { name: 'burburinho', icon: '🗣️' },
+  rain: { name: 'chuva', icon: '🌧️' },
+  party: { name: 'festa', icon: '🎉' },
+};
+const NoiseGen = {
+  cache: {},
+  /** Ressonador de 2 polos (formante). */
+  reso(freq, bw, sr) {
+    const r = Math.exp(-Math.PI * bw / sr);
+    const a1 = 2 * r * Math.cos(2 * Math.PI * freq / sr);
+    const a2 = -r * r;
+    let y1 = 0;
+    let y2 = 0;
+    return x => { const y = (1 - r) * x + a1 * y1 + a2 * y2; y2 = y1; y1 = y; return y; };
+  },
+  /** Burburinho: 6 "vozes" com sílabas de formantes sorteados (parece conversa, mas sem palavras). */
+  babble(sr, n, talkers = 6) {
+    const out = new Float32Array(n);
+    for (let k = 0; k < talkers; k++) {
+      const f0 = 95 + Math.random() * 140;
+      let phase = Math.random();
+      let i = Math.floor(Math.random() * sr * 0.2);
+      while (i < n) {
+        const len = Math.floor(sr * (0.11 + Math.random() * 0.17));
+        const voiced = Math.random() < 0.78;
+        const r1 = this.reso(280 + Math.random() * 600, 90, sr);
+        const r2 = this.reso(900 + Math.random() * 1500, 140, sr);
+        const amp = 0.4 + Math.random() * 0.6;
+        for (let j = 0; j < len && i < n; j++, i++) {
+          const env = Math.sin(Math.PI * j / len);
+          let x;
+          if (voiced) {
+            phase += f0 * (1 + 0.04 * Math.sin(i / sr * 6 + k)) / sr;
+            if (phase >= 1) phase -= 1;
+            x = (phase < 0.08 ? 1 : 0) - 0.08;
+          } else {
+            x = (Math.random() * 2 - 1) * 0.25;
+          }
+          out[i] += (r1(x) + 0.7 * r2(x)) * env * amp;
+        }
+        if (Math.random() < 0.22) i += Math.floor(sr * Math.random() * 0.18);
+      }
+    }
+    return out;
+  },
+  rain(sr, n) {
+    const out = new Float32Array(n);
+    let lp = 0;
+    let prev = 0;
+    for (let i = 0; i < n; i++) {
+      const w = Math.random() * 2 - 1;
+      lp += 0.55 * (w - lp);                 // passa-baixa suave
+      out[i] = (lp - prev) * 0.9 + lp * 0.3; // tira um pouco dos graves
+      prev = lp;
+    }
+    for (let d = 0; d < n / sr * 70; d++) {   // gotas
+      const s = Math.floor(Math.random() * n);
+      const f = 1500 + Math.random() * 3000;
+      const a = 0.3 + Math.random() * 0.7;
+      const len = Math.floor(sr * 0.02);
+      for (let j = 0; j < len && s + j < n; j++) out[s + j] += a * Math.sin(2 * Math.PI * f * j / sr) * Math.exp(-j / (len / 4));
+    }
+    return out;
+  },
+  party(sr, n) {
+    const out = this.babble(sr, n, 8);
+    const notes = [261.6, 329.6, 392, 440, 349.2, 293.7];
+    const beat = Math.floor(sr * 0.5);
+    for (let b = 0; b * beat < n; b++) {
+      const f = notes[b % notes.length];
+      for (let j = 0; j < beat && b * beat + j < n; j++) {
+        const t = j / sr;
+        const i = b * beat + j;
+        out[i] += 0.12 * Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 3);          // música
+        out[i] += 0.35 * Math.sin(2 * Math.PI * (60 + 40 * Math.exp(-t * 30)) * t) * Math.exp(-t * 18); // bumbo
+      }
+    }
+    for (let c = 0; c < n / sr * 3; c++) {     // copos
+      const s = Math.floor(Math.random() * n);
+      for (let j = 0; j < sr * 0.15 && s + j < n; j++) out[s + j] += 0.15 * Math.sin(2 * Math.PI * 3200 * j / sr) * Math.exp(-j / (sr * 0.03));
+    }
+    return out;
+  },
+  buffer(ctx, type) {
+    if (this.cache[type]) return this.cache[type];
+    const sr = ctx.sampleRate;
+    const n = sr * 6;
+    const data = (this[type] || this.babble).call(this, sr, n);
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += data[i] * data[i];
+    const g = 0.1 / (Math.sqrt(sum / n) || 1);
+    const fade = Math.floor(sr * 0.05);
+    for (let i = 0; i < n; i++) {
+      let v = data[i] * g;
+      if (i < fade) v *= i / fade; else if (i > n - fade) v *= (n - i) / fade;   // emenda do loop sem estalo
+      data[i] = Math.max(-0.99, Math.min(0.99, v));
+    }
+    const buf = ctx.createBuffer(1, n, sr);
+    buf.getChannelData(0).set(data);
+    this.cache[type] = buf;
+    return buf;
+  },
+  source(ctx, type) {
+    const src = ctx.createBufferSource();
+    src.buffer = this.buffer(ctx, NOISE_TYPES[type] ? type : 'babble');
+    src.loop = true;
+    return src;
+  },
+};
+
+/* Níveis das atividades adaptativas (1 = mais fácil). */
+const NOISE_SNR = [null, 12, 9, 6, 3, 0, -3, -6, -9];                  // dB (fala acima do ruído)
+const LOWPASS_HZ = [null, 4000, 3000, 2200, 1600, 1200, 900, 700, 500]; // corte do filtro
+const GATE_DUTY = [null, 0.15, 0.22, 0.3, 0.36, 0.42, 0.48, 0.54, 0.6]; // fração cortada (8 cortes por segundo)
+const fmtDb = v => (v > 0 ? '+' : '') + v + ' dB';
+const ADAPT_INFO = {
+  noise: { name: 'nível de ruído', detail: l => `relação sinal/ruído ${fmtDb(NOISE_SNR[l])}` },
+  filter: { name: 'nível do filtro', detail: l => `passa-baixa ${LOWPASS_HZ[l]} Hz ou ${Math.round(GATE_DUTY[l] * 100)}% cortado` },
+  seq: { name: 'tamanho da sequência', detail: l => `${l} itens` },
+  word: { name: 'nível do ditado', detail: l => ['', 'palavras de 2 sílabas, 1 letra-isca', 'todas as palavras, 1 letra-isca', 'todas as palavras, 2 letras-isca'][l] || '' },
+};
+
+/* ---------- palavras escritas ---------- */
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const plain = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+/** Onde as duas palavras do par diferem: { pre, aEnd, bEnd, suf } (comparando sem acentos). */
+function pairDiff(pair) {
+  const a = pair.a.text;
+  const b = pair.b.text;
+  const pa = [...a].map(c => plain(c));
+  const pb = [...b].map(c => plain(c));
+  let pre = 0;
+  while (pre < pa.length && pre < pb.length && pa[pre] === pb[pre]) pre++;
+  let suf = 0;
+  while (suf < pa.length - pre && suf < pb.length - pre && pa[pa.length - 1 - suf] === pb[pb.length - 1 - suf]) suf++;
+  return { pre, suf };
+}
+/** Pedaço da palavra que muda no par (ex.: faca/vaca → "f"; chato/jato → "ch"). */
+function diffPart(pair, side) {
+  const { pre, suf } = pairDiff(pair);
+  const chars = [...pair[side].text];
+  return chars.slice(pre, chars.length - suf).join('');
+}
+function markDiff(pair, side) {
+  const { pre, suf } = pairDiff(pair);
+  const chars = [...pair[side].text];
+  const mid = chars.slice(pre, chars.length - suf).join('');
+  return esc(chars.slice(0, pre).join('')) + `<mark>${esc(mid)}</mark>` + esc(chars.slice(chars.length - suf).join(''));
+}
+/** Contagem simples de sílabas (grupos de vogais; "qu"/"gu" antes de e/i não contam). */
+function syllables(word) {
+  const w = plain(word).replace(/([qg])u(?=[ei])/g, '$1');
+  return (w.match(/[aeiou]+/g) || []).reduce((n, g) => n + (g.length >= 3 ? 2 : /^(ia|io|ea|eo|oa|ua)$/.test(g) && w.endsWith(g) ? 2 : 1), 0);
+}
+function wordBtn(pair, side, cls = '') {
+  return h('button', { class: 'answer word-btn ' + cls, type: 'button', 'aria-label': pair[side].text },
+    pair[side].emoji && h('span', { class: 'word-emoji', 'aria-hidden': 'true' }, pair[side].emoji),
+    h('span', { class: 'word-txt' }, pair[side].text));
+}
+
+/** Correção dos Detetives: mostra as duas formas lado a lado (letra que muda destacada) e toca as duas. */
+async function showCompare(g, pair, right, note = '') {
+  await sleep(350);
+  if (!g.alive()) return;
+  const card = side => h('div', { class: 'cmp-card' },
+    pair[side].emoji && h('span', { class: 'cmp-emoji', 'aria-hidden': 'true' }, pair[side].emoji),
+    h('span', { class: 'cmp-word', html: markDiff(pair, side) }));
+  const ca = card('a');
+  const cb = card('b');
+  const panel = h('div', { class: 'compare' },
+    note && h('p', { class: 'cmp-note' }, note),
+    h('div', { class: 'cmp-row' }, ca, h('span', { class: 'cmp-vs' }, '×'), cb));
+  g.stage.append(panel);
+  await g.play([{ pair, side: 'a', el: ca }, { pair, side: 'b', el: cb }], 'busy', 700);
+  if (!g.alive()) return;
+  (right === 'a' ? ca : cb).classList.add('hint-correct');
+  await sleep(1400);
+  panel.remove();
+}
+async function quickWin(el) {
+  Sound.chime('win');
+  el.classList.add('win');
+  burst(el, ['⚡', '✨', '⭐', '💥']);
+  await sleep(1000);
+  el.classList.remove('win');
+}
+/** Pares (com as duas palavras) agrupados por contraste. */
+function byContrast(pairs) {
+  const m = {};
+  for (const p of pairs) (m[p.contrast] = m[p.contrast] || []).push(p);
+  return m;
+}
+
+/* ---------- Frase maluca ---------- */
+const SENTENCES = [
+  { id: 'td1', contrast: 'td', text: 'Bom {tia}! Hoje o sol está lindo.', right: 'dia' },
+  { id: 'td2', contrast: 'td', text: 'A minha {dia} faz um bolo delicioso.', right: 'tia' },
+  { id: 'td3', contrast: 'td', text: 'O carro furou a {rota} no caminho.', right: 'roda' },
+  { id: 'td4', contrast: 'td', text: 'Eu comi morango com {nada}.', right: 'nata' },
+  { id: 'td5', contrast: 'td', text: 'O filme passou na {dela} do cinema.', right: 'tela' },
+  { id: 'kg1', contrast: 'kg', text: 'O {calo} cantou cocoricó de manhã.', right: 'galo' },
+  { id: 'kg2', contrast: 'kg', text: 'Colei o desenho com {gola}.', right: 'cola' },
+  { id: 'kg3', contrast: 'kg', text: 'O bombeiro apagou o {foco}.', right: 'fogo' },
+  { id: 'kg4', contrast: 'kg', text: 'Deitei na {gama} para dormir.', right: 'cama' },
+  { id: 'kg5', contrast: 'kg', text: 'A {vaga} deu leite no pasto.', right: 'vaca' },
+  { id: 'fv1', contrast: 'fv', text: 'O menino tomou leite de {faca}.', right: 'vaca' },
+  { id: 'fv2', contrast: 'fv', text: 'Corta o pão com a {vaca}.', right: 'faca' },
+  { id: 'fv3', contrast: 'fv', text: 'Tirei uma {voto} com o celular.', right: 'foto' },
+  { id: 'fv4', contrast: 'fv', text: 'Minha avó mora numa {fila} bem pequena.', right: 'vila' },
+  { id: 'fv5', contrast: 'fv', text: 'Meu amigo {vala} muito alto.', right: 'fala' },
+  { id: 'pb1', contrast: 'pb', text: 'O pirata remou o seu {pote} até a ilha.', right: 'bote' },
+  { id: 'pb2', contrast: 'pb', text: 'Lavei as mãos na {Bia}.', right: 'pia' },
+  { id: 'sz1', contrast: 'sz', text: 'Moro numa {caça} amarela.', right: 'casa' },
+  { id: 'chj1', contrast: 'chj', text: 'Comi pão com {queixo}.', right: 'queijo' },
+  { id: 'chj2', contrast: 'chj', text: 'O {chato} voou bem alto no céu.', right: 'jato' },
+];
+const sentenceWrong = s => s.text.match(/\{([^}]+)\}/)[1];
+const sentenceText = s => s.text.replace(/[{}]/g, '');
+/** Par do banco que tem as duas palavras da frase (para usar as gravações da fono). */
+function sentencePair(s) {
+  const w = sentenceWrong(s);
+  return Bank.pairs.find(p => (sameText(p.a.text, w) && sameText(p.b.text, s.right)) || (sameText(p.b.text, w) && sameText(p.a.text, s.right))) || null;
+}
+/** Passos para tocar a frase: a gravação da frase inteira; se não houver, junta as gravações
+ *  de cada palavra e usa a voz sintética só no que faltar. */
+function sentenceSteps(s, el) {
+  const fk = 'f:' + s.id;
+  if (Bank.recorded.has(fk)) return [{ key: fk, text: sentenceText(s), el }];
+  const pair = sentencePair(s);
+  const wrong = sentenceWrong(s);
+  const steps = [];
+  let buffer = [];
+  const flush = () => { if (buffer.length) steps.push({ text: buffer.join(' '), el }); buffer = []; };
+  for (const tok of s.text.split(/\s+/)) {
+    const isWrong = tok.includes('{');
+    const word = tok.replace(/[{}.,!?]/g, '');
+    let key = wordKey(word);
+    if (isWrong && pair) key = pair.id + ':' + (sameText(pair.a.text, wrong) ? 'a' : 'b');
+    if (Bank.recorded.has(key)) { flush(); steps.push({ key, text: word, el }); } else buffer.push(tok.replace(/[{}]/g, ''));
+  }
+  flush();
+  return steps;
+}
+
+/* ---------- Código secreto ---------- */
+const SYLLABLES = {
+  pb: [['pa', 'pá'], ['ba', 'bá']], td: [['ta', 'tá'], ['da', 'dá']], kg: [['ca', 'cá'], ['ga', 'gá']],
+  fv: [['fa', 'fá'], ['va', 'vá']], sz: [['sa', 'sá'], ['za', 'zá']], chj: [['cha', 'chá'], ['ja', 'já']],
+};
+const sylItem = (c, i) => ({ key: 's:' + SYLLABLES[c][i][0], text: SYLLABLES[c][i][1] });
+
+/** Identificação simples (duas palavras escritas): usada em Ruído, Som picotado e Missão relâmpago. */
+async function runIdentify(trial, g, { fx = null, quick = false, extra = {} } = {}) {
+  const { pair, target, targetLeft } = trial;
+  const sides = targetLeft ? [target, other(target)] : [other(target), target];
+  const btns = sides.map(s => wordBtn(pair, s));
+  const signal = h('div', { class: 'signal', html: SPEAKER_SVG });
+  g.stage.replaceChildren(signal, h('div', { class: 'word-row2' }, btns));
+  let replays = -1;
+  const listen = async () => {
+    replays++;
+    const r = await g.play([{ pair, side: target, fx, el: signal }]);
+    if (!r.cancelled) g.lock('');
+  };
+  g.replayBtn.onclick = listen;
+  listen();
+  const idx = await g.choose(btns.map((b, i) => [b, i]));
+  if (idx == null) { g.endInput(btns); return null; }
+  g.endInput(btns);
+  const correct = sides[idx] === target;
+  const right = btns[sides.indexOf(target)];
+  if (quick) {
+    right.classList.add(correct ? 'flash-ok' : 'hint-correct');
+    if (correct) Sound.chime('tap');
+    await sleep(correct ? 350 : 800);
+  } else if (correct) await quickWin(right);
+  else await showCompare(g, pair, target);
+  return {
+    ...baseResult(pair), stim: target, expected: pair[target].text, answer: pair[sides[idx]].text,
+    correct, replays: Math.max(0, replays), ...extra,
+  };
+}
+
+const detArt = (icon, label) => `<span class="mission-art"><span class="mission-icon">${icon}</span><span class="mission-tag">${label}</span></span>`;
+
+Object.assign(ACTIVITIES, {
+  /* 1. LETRA ESCONDIDA: ouve a palavra e completa a letra que falta (ex.: _aca → F ou V). */
+  hidden: {
+    id: 'hidden',
+    name: 'Letra escondida',
+    icon: '🔡',
+    desc: 'Ouvir e escrever: ouve a palavra e escolhe a letra que falta (_aca: F ou V). Treino direto da troca na escrita.',
+    art: () => detArt('🔡', '_ACA'),
+    build: (ctx, n) => buildTrials('which', ctx.pairs, n),
+    async run(trial, g) {
+      const { pair, target, targetLeft } = trial;
+      const { pre, suf } = pairDiff(pair);
+      const chars = [...pair[target].text];
+      const blank = h('span', { class: 'blank' }, '?');
+      const wordEl = h('div', { class: 'hidden-word' },
+        chars.slice(0, pre).join(''), blank, chars.slice(chars.length - suf).join(''));
+      const sides = targetLeft ? [target, other(target)] : [other(target), target];
+      const btns = sides.map(s => h('button', { class: 'answer letter-btn', type: 'button' }, diffPart(pair, s).toUpperCase()));
+      g.stage.replaceChildren(h('div', { class: 'signal', html: SPEAKER_SVG }), wordEl, h('div', { class: 'word-row2' }, btns));
+      let replays = -1;
+      const listen = async () => { replays++; const r = await g.play([{ pair, side: target, el: wordEl }]); if (!r.cancelled) g.lock(''); };
+      g.replayBtn.onclick = listen;
+      listen();
+      const idx = await g.choose(btns.map((b, i) => [b, i]));
+      g.endInput(btns);
+      const correct = sides[idx] === target;
+      blank.textContent = diffPart(pair, target);
+      blank.classList.add(correct ? 'ok' : 'fixed');
+      if (correct) await quickWin(btns[idx]);
+      else await showCompare(g, pair, target);
+      return {
+        ...baseResult(pair), stim: target, expected: diffPart(pair, target), answer: diffPart(pair, sides[idx]),
+        correct, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* 2. FRASE MALUCA: acha a palavra trocada na frase e corrige com o par certo. */
+  silly: {
+    id: 'silly',
+    name: 'Frase maluca',
+    icon: '🤪',
+    desc: 'Compreensão e julgamento: ouve uma frase com uma palavra trocada pelo par, acha a palavra errada e escolhe a certa.',
+    art: () => detArt('🤪', 'leite de FACA?'),
+    check(ctx) {
+      const cs = new Set(ctx.pairs.map(p => p.contrast));
+      if (!SENTENCES.some(s => cs.has(s.contrast))) return 'A Frase maluca tem frases de T×D, K×G, F×V, P×B, S×Z e CH×J. Em “Rodada”, escolha pares de algum desses contrastes.';
+      return null;
+    },
+    build(ctx, n) {
+      const cs = new Set(ctx.pairs.map(p => p.contrast));
+      return cycle(SENTENCES.filter(s => cs.has(s.contrast)), n).map(s => ({ s }));
+    },
+    async run(trial, g) {
+      const { s } = trial;
+      const wrong = sentenceWrong(s);
+      const pair = sentencePair(s);
+      const sentence = h('div', { class: 'sentence' });
+      const toks = s.text.split(/\s+/);
+      const chips = toks.map(tok => h('button', { class: 'answer chip-word', type: 'button' }, tok.replace(/[{}]/g, '')));
+      add(sentence, chips);
+      const wrongIdx = toks.findIndex(t => t.includes('{'));
+      const prompt = h('p', { class: 'det-prompt' }, '🔍 Qual palavra está errada?');
+      g.stage.replaceChildren(prompt, sentence);
+      let replays = -1;
+      const listen = async () => { replays++; const r = await g.play(sentenceSteps(s, sentence), 'listen', 60); if (!r.cancelled) g.lock(''); };
+      g.replayBtn.onclick = listen;
+      listen();
+      const picked = await g.choose(chips.map((c, i) => [c, i]));
+      const found = picked === wrongIdx;
+      chips.forEach(c => { c.onclick = null; c.disabled = true; });
+      chips[wrongIdx].classList.add('suspect');
+      if (found) { Sound.chime('star'); chips[wrongIdx].classList.add('win'); } else {
+        chips[picked].classList.add('miss');
+        await sleep(700);
+      }
+      // Passo 2: corrigir.
+      const options = shuffle([wrong, s.right]);
+      const fixBtns = options.map(w => h('button', { class: 'answer word-btn', type: 'button' }, h('span', { class: 'word-txt' }, w)));
+      prompt.textContent = '✏️ Qual é a palavra certa?';
+      g.stage.append(h('div', { class: 'word-row2' }, fixBtns));
+      g.lock('');
+      const choice = await g.choose(fixBtns.map((b, i) => [b, options[i]]));
+      g.endInput(fixBtns);
+      const fixed = sameText(choice, s.right);
+      const correct = found && fixed;
+      chips[wrongIdx].textContent = chips[wrongIdx].textContent.replace(wrong, s.right);
+      chips[wrongIdx].classList.add('fixed');
+      if (correct) await quickWin(sentence);
+      else if (pair) await showCompare(g, pair, sameText(pair.a.text, s.right) ? 'a' : 'b', `Na frase o certo é “${s.right}”.`);
+      else await sleep(1500);
+      return {
+        pairId: pair ? pair.id : null, contrast: s.contrast, words: pair ? `${pair.a.text} × ${pair.b.text}` : `${wrong} × ${s.right}`,
+        item: sentenceText(s), itemKey: 'silly:' + s.id, expected: s.right, answer: choice,
+        found, fixed, correct, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* 3. DITADO DETETIVE: ouve a palavra e monta com letras (com 1–2 letras-isca do par). */
+  dictation: {
+    id: 'dictation',
+    name: 'Ditado detetive',
+    icon: '🧩',
+    desc: 'Ditado com letras móveis: monta a palavra ouvida; há letras-isca do par trocado. Começa com palavras de 2 sílabas e sobe.',
+    art: () => detArt('🧩', 'F A C A'),
+    adaptive: { kind: 'word', start: 1, min: 1, max: 3, up: 3, down: 2, label: l => `Nível ${l}` },
+    build: (ctx, n) => buildTrials('which', ctx.pairs, n),
+    async run(trial, g) {
+      const level = g.adapt.level;
+      // Escolhe a palavra pelo nível: 1 = só palavras de 2 sílabas com até 5 letras.
+      let { pair, target } = trial;
+      const fits = (p, s) => level > 1 || (syllables(p[s].text) === 2 && [...p[s].text].length <= 5);
+      if (!fits(pair, target)) {
+        const alt = shuffle(g.ctx.pairs.flatMap(p => ['a', 'b'].map(s => [p, s]))).find(([p, s]) => fits(p, s));
+        if (alt) [pair, target] = alt;
+      }
+      const word = pair[target].text.toUpperCase();
+      const letters = [...word];
+      const decoys = [...diffPart(pair, other(target)).toUpperCase()];
+      if (level >= 3) {
+        const pool = [...'BCDFGJLMNPRSTVZ'].filter(c => !letters.includes(c) && !decoys.includes(c));
+        decoys.push(pool[rand(pool.length)]);
+      }
+      const tiles = shuffle([...letters, ...decoys]).map(ch => h('button', { class: 'answer tile', type: 'button' }, ch));
+      const slots = letters.map(() => h('button', { class: 'slot-letter', type: 'button', 'aria-label': 'espaço' }));
+      const check = h('button', { class: 'answer btn-check', type: 'button', disabled: true }, '✔ Conferir');
+      const tray = h('div', { class: 'tiles' }, tiles);
+      g.stage.replaceChildren(h('div', { class: 'signal', html: SPEAKER_SVG }), h('div', { class: 'slots' }, slots), tray, check);
+      const filled = slots.map(() => null);
+      const paint = () => { check.disabled = filled.some(x => !x); };
+      const place = (tile, i) => {
+        if (i == null) i = filled.findIndex(x => !x);
+        if (i < 0) return;
+        if (filled[i]) unplace(i);
+        filled[i] = tile;
+        slots[i].textContent = tile.textContent;
+        slots[i].classList.add('full');
+        tile.classList.add('used');
+        Synth.tap('drum');
+        paint();
+      };
+      const unplace = i => {
+        const t = filled[i];
+        if (!t) return;
+        t.classList.remove('used');
+        filled[i] = null;
+        slots[i].textContent = '';
+        slots[i].classList.remove('full');
+        paint();
+      };
+      slots.forEach((s, i) => { s.onclick = () => { if (!g.stage.dataset.lock) unplace(i); }; });
+      // Arrastar a letra até um espaço (tocar também funciona: vai para o próximo espaço livre).
+      tiles.forEach(tile => {
+        let st = null;
+        tile.addEventListener('pointerdown', e => {
+          if (g.stage.dataset.lock || tile.classList.contains('used')) return;
+          e.preventDefault();
+          try { tile.setPointerCapture(e.pointerId); } catch (_) { /* ok */ }
+          st = { x: e.clientX, y: e.clientY, id: e.pointerId };
+          tile.classList.add('dragging');
+        });
+        tile.addEventListener('pointermove', e => {
+          if (!st || e.pointerId !== st.id) return;
+          tile.style.transform = `translate(${e.clientX - st.x}px, ${e.clientY - st.y}px) scale(1.1)`;
+        });
+        const end = e => {
+          if (!st || e.pointerId !== st.id) return;
+          const moved = Math.hypot(e.clientX - st.x, e.clientY - st.y);
+          st = null;
+          tile.classList.remove('dragging');
+          tile.style.transform = '';
+          if (e.type === 'pointercancel') return;
+          if (moved < 12) { place(tile); return; }
+          const target = slots.findIndex(s => { const r = s.getBoundingClientRect(); return e.clientX > r.left - 10 && e.clientX < r.right + 10 && e.clientY > r.top - 20 && e.clientY < r.bottom + 20; });
+          if (target >= 0) place(tile, target);
+        };
+        tile.addEventListener('pointerup', end);
+        tile.addEventListener('pointercancel', end);
+      });
+      let replays = -1;
+      const listen = async () => { replays++; const r = await g.play([{ pair, side: target }]); if (!r.cancelled) g.lock(''); };
+      g.replayBtn.onclick = listen;
+      listen();
+      await g.choose([[check, true]]);
+      g.endInput([check, ...slots]);
+      tiles.forEach(t => { t.disabled = true; });
+      const built = filled.map(t => t.textContent).join('');
+      const correct = built === word;
+      if (correct) {
+        slots.forEach(s => s.classList.add('ok'));
+        await quickWin(slots[slots.length - 1].parentNode);
+      } else {
+        slots.forEach((s, i) => { s.textContent = letters[i]; s.classList.toggle('fixed', filled[i].textContent !== letters[i]); });
+        await showCompare(g, pair, target);
+      }
+      return {
+        ...baseResult(pair), stim: target, expected: pair[target].text, answer: built.toLowerCase(),
+        correct, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* 4. RUÍDO NA ESCUTA: a palavra com ruído de fundo; o ruído sobe com 3 acertos seguidos e desce com 2 erros. */
+  noise: {
+    id: 'noise',
+    name: 'Ruído na escuta',
+    icon: '🎧',
+    desc: 'Figura-fundo: identifica a palavra do par com ruído de fundo (burburinho, chuva, festa). Adaptativo: o ruído sobe com 3 acertos seguidos e desce com 2 erros.',
+    art: () => detArt('🎉', 'S/R'),
+    adaptive: { kind: 'noise', start: 1, min: 1, max: 8, up: 3, down: 2, warmup: 1, label: l => `Ruído ${l}` },
+    build: (ctx, n) => buildTrials('which', ctx.pairs, n),
+    run(trial, g) {
+      const level = g.adapt.level;
+      const types = Object.keys(NOISE_TYPES);
+      const type = NOISE_TYPES[State.settings.noiseType] ? State.settings.noiseType : types[rand(types.length)];
+      const p = runIdentify(trial, g, { fx: { noise: { type, snr: NOISE_SNR[level] } }, extra: { noiseType: type, snr: NOISE_SNR[level] } });
+      g.stage.prepend(h('span', { class: 'noise-tag', title: NOISE_TYPES[type].name }, NOISE_TYPES[type].icon));
+      return p;
+    },
+  },
+
+  /* 5. SOM PICOTADO: a palavra abafada (passa-baixa) ou com cortes curtos; mesma regra adaptativa. */
+  chopped: {
+    id: 'chopped',
+    name: 'Som picotado',
+    icon: '✂️',
+    desc: 'Fechamento auditivo: identifica a palavra abafada (filtro passa-baixa) ou com cortes curtos de silêncio. Adaptativo como o Ruído na escuta.',
+    needsAudio: true,
+    art: () => detArt('✂️', 'pi·co·ta·do'),
+    adaptive: { kind: 'filter', start: 1, min: 1, max: 8, up: 3, down: 2, warmup: 1, label: l => `Filtro ${l}` },
+    build(ctx, n) {
+      const trials = buildTrials('which', ctx.pairs, n);
+      const kinds = balancedPositions(n, 2);
+      return trials.map((t, i) => ({ ...t, kind: kinds[i] ? 'gate' : 'lowpass' }));
+    },
+    run(trial, g) {
+      const l = g.adapt.level;
+      const fx = trial.kind === 'gate' ? { gate: { rate: 8, duty: GATE_DUTY[l] } } : { lowpass: LOWPASS_HZ[l] };
+      return runIdentify(trial, g, { fx, extra: { filter: trial.kind === 'gate' ? `cortes ${Math.round(GATE_DUTY[l] * 100)}%` : `passa-baixa ${LOWPASS_HZ[l]} Hz` } });
+    },
+  },
+
+  /* 6. CÓDIGO SECRETO: sequência de sílabas do par (ta–da–ta); reproduz tocando nos dois botões. */
+  code: {
+    id: 'code',
+    name: 'Código secreto',
+    icon: '🔐',
+    desc: 'Ordenação temporal: ouve uma sequência de sílabas do par (ta–da–ta) e reproduz na ordem. Começa com 3 e vai até 5 (sobe com 2 acertos seguidos).',
+    art: () => detArt('🔐', 'TA·DA·TA'),
+    adaptive: { kind: 'seq', start: 3, min: 3, max: 5, up: 2, down: 2, label: l => `Código de ${l}` },
+    build(ctx, n) {
+      const cs = Object.keys(byContrast(ctx.pairs)).filter(c => SYLLABLES[c]);
+      return cycle(cs.length ? cs : ['td'], n).map(contrast => ({ contrast }));
+    },
+    async run(trial, g) {
+      const c = trial.contrast;
+      const len = g.adapt.level;
+      let seq;
+      do { seq = Array.from({ length: len }, () => rand(2)); } while (seq.every(x => x === seq[0]));
+      const lights = seq.map(() => h('span', { class: 'code-light' }));
+      const slots = seq.map(() => h('span', { class: 'code-slot' }));
+      const btns = [0, 1].map(i => h('button', { class: 'answer syl-btn', type: 'button' }, SYLLABLES[c][i][0].toUpperCase()));
+      const undo = h('button', { class: 'answer btn-undo', type: 'button', 'aria-label': 'Apagar' }, '⌫');
+      g.stage.replaceChildren(
+        h('div', { class: 'code-lights' }, lights),
+        h('div', { class: 'code-slots' }, slots),
+        h('div', { class: 'word-row2' }, btns[0], undo, btns[1]));
+      const steps = () => seq.map((i, k) => ({ ...sylItem(c, i), el: lights[k] }));
+      let replays = -1;
+      const listen = async () => { replays++; const r = await g.play(steps(), 'listen', 380); if (!r.cancelled) g.lock(''); };
+      g.replayBtn.onclick = listen;
+      listen();
+      const answer = [];
+      undo.onclick = () => {
+        if (!answer.length || g.stage.dataset.lock) return;
+        answer.pop();
+        const s = slots[answer.length];
+        s.textContent = '';
+        s.classList.remove('full');
+      };
+      while (answer.length < len) {
+        const i = await g.choose(btns.map((b, k) => [b, k]));
+        if (i == null) return null;
+        Sound.chime('tap');
+        const s = slots[answer.length];
+        s.textContent = SYLLABLES[c][i][0].toUpperCase();
+        s.classList.add('full');
+        answer.push(i);
+      }
+      g.endInput([...btns, undo]);
+      const correct = answer.every((x, k) => x === seq[k]);
+      const txt = arr => arr.map(i => SYLLABLES[c][i][0]).join('-');
+      if (correct) await quickWin(slots[0].parentNode);
+      else {
+        await sleep(500);
+        slots.forEach((s, k) => { s.textContent = SYLLABLES[c][seq[k]][0].toUpperCase(); s.classList.toggle('fixed', answer[k] !== seq[k]); });
+        await g.play(seq.map((i, k) => ({ ...sylItem(c, i), el: slots[k] })), 'busy', 380);
+        await sleep(1100);
+      }
+      return {
+        pairId: null, contrast: c, words: SYLLABLES[c].map(x => x[0]).join(' × '),
+        item: `${len} sílabas`, itemKey: `code:${c}:${len}`, expected: txt(seq), answer: txt(answer),
+        correct, seqLen: len, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* 7. CAÇA AO INTRUSO: 4 palavras, 3 com o mesmo som-alvo e 1 com o par; acha o intruso. */
+  intruder: {
+    id: 'intruder',
+    name: 'Caça ao intruso',
+    icon: '👀',
+    desc: 'Discriminação em sequência: ouve 4 palavras (3 com o mesmo som, ex.: /v/, e 1 com o par /f/) e acha a diferente.',
+    art: () => detArt('👀', '1 2 3 4'),
+    check(ctx) {
+      if (!Object.values(byContrast(ctx.pairs)).some(l => l.length >= 3)) return 'O Caça ao intruso precisa de pelo menos 3 pares do mesmo contraste. Em “Rodada”, escolha mais pares de um contraste.';
+      return null;
+    },
+    build(ctx, n) {
+      const groups = Object.values(byContrast(ctx.pairs)).filter(l => l.length >= 3);
+      const pos = balancedPositions(n, 4);
+      const majA = balancedPositions(n, 2);
+      return cycle(groups, n).map((list, i) => {
+        const pick = shuffle(list);
+        const major = majA[i] ? 'a' : 'b';
+        const three = pick.slice(0, 3);
+        const odd = pick.length >= 4 ? pick[3] : three[rand(3)];
+        const words = three.map(p => ({ pair: p, side: major }));
+        words.splice(pos[i], 0, { pair: odd, side: other(major) });
+        return { words, odd: pos[i] };
+      });
+    },
+    async run(trial, g) {
+      const { words, odd } = trial;
+      const bubbles = words.map((w, i) => h('button', { class: 'answer num-bubble', type: 'button', 'aria-label': 'palavra ' + (i + 1) },
+        h('span', { class: 'num' }, String(i + 1)), h('span', { class: 'num-word' })));
+      g.stage.replaceChildren(h('p', { class: 'det-prompt' }, '🕵️ Qual é o intruso?'), h('div', { class: 'num-row' }, bubbles));
+      let replays = -1;
+      const listen = async () => { replays++; const r = await g.play(words.map((w, i) => ({ ...w, el: bubbles[i] })), 'listen', 650); if (!r.cancelled) g.lock(''); };
+      g.replayBtn.onclick = listen;
+      listen();
+      const idx = await g.choose(bubbles.map((b, i) => [b, i]));
+      g.endInput(bubbles);
+      words.forEach((w, i) => { bubbles[i].querySelector('.num-word').textContent = w.pair[w.side].text; });
+      const correct = idx === odd;
+      const op = words[odd];
+      if (correct) await quickWin(bubbles[idx]);
+      else {
+        bubbles[odd].classList.add('hint-correct');
+        await showCompare(g, op.pair, op.side, `O intruso era “${op.pair[op.side].text}”.`);
+      }
+      return {
+        ...baseResult(op.pair), stim: op.side, item: words.map(w => w.pair[w.side].text).join(', '),
+        expected: op.pair[op.side].text, answer: words[idx].pair[words[idx].side].text, correct, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* 8. MISSÃO RELÂMPAGO (opcional): 60 s de palavras do par; recorde pessoal. */
+  blitz: {
+    id: 'blitz',
+    name: 'Missão relâmpago',
+    icon: '⚡',
+    desc: 'Automatização (opcional): 60 segundos identificando palavras do par, para quem já domina. Recorde pessoal, sem ranking.',
+    timed: 60,
+    art: () => detArt('⚡', '60 s'),
+    build: (ctx, n) => buildTrials('which', ctx.pairs, n),
+    run: (trial, g) => runIdentify(trial, g, { quick: true }),
+  },
+
+  /* 9. FONE DE OUVIDO (opcional): escuta dicótica, uma palavra em cada ouvido. */
+  dichotic: {
+    id: 'dichotic',
+    name: 'Fone de ouvido',
+    icon: '🎧',
+    desc: 'Escuta dicótica (opcional): uma palavra do par em cada ouvido ao mesmo tempo; responde o que ouviu à esquerda, à direita ou nos dois. Precisa de fone.',
+    needsAudio: true,
+    art: () => detArt('🎧', 'E | D'),
+    async intro(g) {
+      const test = (label, pan) => h('button', {
+        class: 'btn', type: 'button',
+        onclick: async () => {
+          const p = g.ctx.pairs[0];
+          const buf = await Sound.buffer(p.id + ':a');
+          if (buf) Sound.playBuffer(buf, { pan });
+        },
+      }, label);
+      const go_ = h('button', { class: 'btn primary big', type: 'button' }, 'Começar ▶');
+      g.stage.replaceChildren(h('div', { class: 'headphones' },
+        h('div', { class: 'hp-icon', 'aria-hidden': 'true' }, '🎧'),
+        h('h2', null, 'Use fone de ouvido'),
+        h('p', null, 'Confira se o lado está certo:'),
+        h('div', { class: 'row wrap center' }, test('⬅️ Ouvir na esquerda', -1), test('Ouvir na direita ➡️', 1)),
+        go_));
+      await waitChoice([[go_, true]]);
+    },
+    build(ctx, n) {
+      const trials = buildTrials('which', ctx.pairs, n);
+      const asks = cycle(['left', 'right', 'both'], n);
+      return trials.map((t, i) => ({ pair: t.pair, leftSide: t.target, ask: asks[i] }));
+    },
+    async run(trial, g) {
+      const { pair, leftSide, ask } = trial;
+      const rightSide = other(leftSide);
+      const ears = ask === 'both' ? ['left', 'right'] : [ask];
+      const rows = ears.map(ear => {
+        const order = shuffle(['a', 'b']);
+        const btns = order.map(s => wordBtn(pair, s));
+        return { ear, order, btns, el: h('div', { class: 'ear-row' }, h('span', { class: 'ear-label' }, ear === 'left' ? '⬅️ Esquerda' : 'Direita ➡️'), btns) };
+      });
+      const head = h('div', { class: 'hp-head' }, h('span', { class: 'ear l' + (ears.includes('left') ? ' ask' : '') }, 'E'), h('span', { class: 'hp-mid' }, '🎧'), h('span', { class: 'ear r' + (ears.includes('right') ? ' ask' : '') }, 'D'));
+      g.stage.replaceChildren(head, h('p', { class: 'det-prompt' }, ask === 'both' ? 'O que você ouviu em cada ouvido?' : `O que você ouviu no ouvido ${ask === 'left' ? 'ESQUERDO' : 'DIREITO'}?`), ...rows.map(r => r.el));
+      let replays = -1;
+      const listen = async () => {
+        replays++;
+        g.lock('listen');
+        head.classList.add('speaking');
+        const tts = await Sound.dual({ key: pair.id + ':' + leftSide }, { key: pair.id + ':' + rightSide });
+        head.classList.remove('speaking');
+        g.noteTts(tts);
+        if (g.alive()) g.lock('');
+      };
+      g.replayBtn.onclick = listen;
+      listen();
+      const answers = {};
+      for (const r of rows) {
+        const i = await g.choose(r.btns.map((b, k) => [b, k]));
+        r.btns.forEach(b => { b.onclick = null; b.disabled = true; });
+        r.btns[i].classList.add('chosen');
+        answers[r.ear] = r.order[i];
+      }
+      g.endInput([]);
+      const want = { left: leftSide, right: rightSide };
+      const correct = ears.every(e => answers[e] === want[e]);
+      if (correct) await quickWin(head);
+      else {
+        rows.forEach(r => r.btns[r.order.indexOf(want[r.ear])].classList.add('hint-correct'));
+        await sleep(1400);
+      }
+      const txt = o => ears.map(e => `${e === 'left' ? 'E' : 'D'}:${pair[o[e]].text}`).join(' ');
+      return {
+        ...baseResult(pair), ask, expected: txt(want), answer: txt(answers), correct,
+        correctLeft: ears.includes('left') ? answers.left === want.left : null,
+        correctRight: ears.includes('right') ? answers.right === want.right : null,
+        replays: Math.max(0, replays),
+      };
+    },
+  },
+});
+
+/* ---------- missões: pontos, patentes e insígnias ---------- */
+const RANKS = [
+  { min: 0, name: 'Detetive Júnior', icon: '🔎' },
+  { min: 400, name: 'Agente', icon: '🕶️' },
+  { min: 1200, name: 'Mestre do Som', icon: '🏆' },
+];
+const rankOf = xp => RANKS.reduce((r, x) => (xp >= x.min ? x : r), RANKS[0]);
+const nextRank = xp => RANKS.find(x => x.min > xp) || null;
+const BADGE_CONTRASTS = ['td', 'kg', 'fv', 'pb', 'sz', 'chj'];
+const starsFor = acc => (acc >= 0.9 ? 3 : acc >= 0.6 ? 2 : 1);
+
+async function getAgent(childId) {
+  const a = await DB.kv('agent:' + childId, null);
+  return { xp: 0, badges: {}, best: {}, ...(a || {}) };
+}
+/** Insígnia de um contraste: 90% ou mais em 2 sessões seguidas (com pelo menos 4 tentativas dele em cada). */
+async function earnedBadges(childId) {
+  const ss = await sessionsOf(childId, 'detetives');
+  const out = {};
+  for (const c of BADGE_CONTRASTS) {
+    const rates = ss.map(s => s.trials.filter(t => t.contrast === c)).filter(t => t.length >= 4).map(t => t.filter(x => x.correct).length / t.length);
+    for (let i = 1; i < rates.length; i++) if (rates[i] >= 0.9 && rates[i - 1] >= 0.9) { out[c] = true; break; }
+  }
+  return out;
+}
+
+Rewards.missions = async (child, session, def) => {
+  const hits = session.trials.filter(t => t.correct).length;
+  const acc = session.trials.length ? hits / session.trials.length : 0;
+  const stars = starsFor(acc);
+  const prof = await getAgent(child.id);
+  const prevXp = prof.xp;
+  const xp = hits * 10 + (session.trials.length ? 20 : 0);
+  prof.xp += xp;
+  prof.best[def.id] = Math.max(prof.best[def.id] || 0, stars);
+  const earned = await earnedBadges(child.id);
+  const newBadges = Object.keys(earned).filter(c => !prof.badges[c]);
+  newBadges.forEach(c => { prof.badges[c] = new Date().toISOString(); });
+  let record = null;
+  if (def.timed) {
+    const key = `record:${child.id}:${def.id}`;
+    const old = await DB.kv(key, 0);
+    record = { score: hits, best: Math.max(old, hits), isNew: hits > old && hits > 0 };
+    if (record.isNew) await DB.setKv(key, hits);
+  }
+  await DB.setKv('agent:' + child.id, prof);
+  return { screen: 'debrief', params: { mode: def.id, stars, xp, prevXp, newBadges, record, adaptive: session.adaptive || null, hits, total: session.trials.length } };
+};
+
+function xpBar(xp) {
+  const r = rankOf(xp);
+  const nx = nextRank(xp);
+  const f = nx ? (xp - r.min) / (nx.min - r.min) : 1;
+  return h('div', { class: 'xp' },
+    h('span', { class: 'xp-rank' }, r.icon, ' ', r.name),
+    h('span', { class: 'xp-bar' }, h('span', { class: 'xp-fill', style: `transform:scaleX(${f.toFixed(3)})` })),
+    h('span', { class: 'xp-num' }, nx ? `${xp} / ${nx.min} XP` : `${xp} XP`));
+}
+function badgeShelf(badges) {
+  return h('div', { class: 'badges' }, BADGE_CONTRASTS.map(c => h('span', {
+    class: 'badge-det' + (badges[c] ? ' got' : ''), style: `--c:${CONTRASTS[c].color}`,
+    title: badges[c] ? `Insígnia ${CONTRASTS[c].short}: conquistada` : `Insígnia ${CONTRASTS[c].short}: 90% em 2 sessões seguidas`,
+  }, h('span', { class: 'badge-ico' }, badges[c] ? '🏅' : '🔒'), CONTRASTS[c].short)));
+}
+
+/* Mapa de fases (menu dos Detetives). */
+MenuStyles.map = async (app, { child, acts, top, alive }) => {
+  const prof = await getAgent(child.id);
+  if (!alive()) return;
+  top.append(xpBar(prof.xp));
+  app.append(
+    acts.length
+      ? h('div', { class: 'mission-map' }, acts.map((m, i) => {
+        const best = prof.best[m.id] || 0;
+        return h('button', { class: 'mission-node' + (best ? ' done' : ''), type: 'button', onclick: () => go('game', { mode: m.id }) },
+          h('span', { class: 'mission-num' }, String(i + 1).padStart(2, '0')),
+          h('span', { class: 'mission-ico', 'aria-hidden': 'true' }, m.icon),
+          h('span', { class: 'mission-name' }, m.name),
+          h('span', { class: 'mission-stars', 'aria-label': `${best} estrelas` }, [1, 2, 3].map(k => h('span', { class: k <= best ? 'on' : '' }, '★'))));
+      }))
+      : h('p', { class: 'empty' }, 'Nenhuma missão ativa para esta criança.'),
+    badgeShelf(prof.badges));
+};
+
+/* Fim da missão: estrelas, pontos, patente e insígnias novas. */
+Screens.debrief = {
+  themed: true,
+  async render(app, p, alive) {
+    const def = ACTIVITIES[p.mode] || {};
+    const prevRank = rankOf(p.prevXp);
+    const newRank = rankOf(p.prevXp + p.xp);
+    const starEls = [1, 2, 3].map(i => h('span', { class: 'rstar' + (i <= p.stars ? ' earned' : '') }, '★'));
+    const xpEl = h('div', { class: 'debrief-xp' }, xpBar(p.prevXp));
+    const lines = [];
+    lines.push(h('p', { class: 'debrief-score' }, `${p.hits} de ${p.total} ${def.timed ? 'acertos em 60 s' : 'acertos'}`));
+    if (p.record) lines.push(h('p', { class: 'debrief-line' + (p.record.isNew ? ' gold' : '') }, p.record.isNew ? `⚡ Novo recorde: ${p.record.score}!` : `Seu recorde: ${p.record.best}`));
+    if (p.adaptive) {
+      const A = ADAPT_INFO[p.adaptive.kind];
+      lines.push(h('p', { class: 'debrief-line' }, `Nível máximo: ${def.adaptive ? def.adaptive.label(p.adaptive.max) : p.adaptive.max}`));
+      if (A && p.adaptive.kind !== 'word') lines.push(h('p', { class: 'debrief-sub' }, A.detail(p.adaptive.max)));
+    }
+    const badgeLine = p.newBadges && p.newBadges.length
+      ? h('div', { class: 'debrief-badges' }, p.newBadges.map(c => h('span', { class: 'badge-det got big', style: `--c:${CONTRASTS[c].color}` }, h('span', { class: 'badge-ico' }, '🏅'), 'Insígnia ', CONTRASTS[c].short)))
+      : null;
+    const rankUp = newRank !== prevRank ? h('div', { class: 'rank-up' }, `Nova patente: ${newRank.icon} ${newRank.name}!`) : null;
+    const actions = h('div', { class: 'reward-actions' },
+      iconBtn('🗺️', 'Voltar ao mapa', () => go('menu')),
+      iconBtn('🔁', 'Jogar de novo', () => go('game', { mode: p.mode })));
+    add(app, h('div', { class: 'debrief' },
+      h('h1', { class: 'debrief-title' }, 'Missão cumprida!'),
+      h('p', { class: 'debrief-name' }, `${def.icon || ''} ${def.name || ''}`),
+      h('div', { class: 'reward-stars' }, starEls),
+      lines,
+      xpEl,
+      h('p', { class: 'debrief-gain' }, `+${p.xp} XP`),
+      rankUp,
+      badgeLine,
+      actions));
+    for (const [i, el] of starEls.entries()) {
+      await sleep(i === 0 ? 300 : 400);
+      if (!alive()) return;
+      el.classList.add('show');
+      if (i < p.stars) Sound.chime('star');
+    }
+    await sleep(300);
+    if (!alive()) return;
+    xpEl.replaceChildren(xpBar(p.prevXp + p.xp));
+    if (rankUp || badgeLine) { Sound.chime('open'); burst(rankUp || badgeLine, ['🏅', '⭐', '✨', '⚡']); }
   },
 };
 
