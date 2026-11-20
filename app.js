@@ -3145,7 +3145,7 @@ Object.assign(ACTIVITIES, {
         await sleep(1100);
       }
       return {
-        pairId: null, contrast: c, words: SYLLABLES[c].map(x => x[0]).join(' × '),
+        pairId: null, contrast: c, words: `${SYLLABLES[c].map(x => x[0]).join(' × ')} · ${len} sílabas`,
         item: `${len} sílabas`, itemKey: `code:${c}:${len}`, expected: txt(seq), answer: txt(answer),
         correct, seqLen: len, replays: Math.max(0, replays),
       };
@@ -3999,7 +3999,7 @@ async function renderProgressTab(el) {
     const inGroup = mine.filter(s => s.group === gid);
     const modes = [...new Set(inGroup.map(s => s.mode))].sort((a, b) => groupOf(gid).activities.indexOf(a) - groupOf(gid).activities.indexOf(b));
     if (modeF !== 'all' && !modes.includes(modeF)) modeF = 'all';
-    modeSel.replaceChildren(h('option', { value: 'all' }, 'Todas as atividades'), modes.map(m => h('option', { value: m }, actName(m))));
+    modeSel.replaceChildren(h('option', { value: 'all' }, 'Todas as atividades'), ...modes.map(m => h('option', { value: m }, actName(m))));
     modeSel.value = modeF;
 
     const ss = inGroup.filter(s => modeF === 'all' || s.mode === modeF).sort((a, b) => a.date.localeCompare(b.date));

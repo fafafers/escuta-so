@@ -1,7 +1,7 @@
 {
   "name": "Escuta Só!",
   "short_name": "Escuta Só!",
-  "description": "Jogo de discriminação auditiva de pares mínimos (surdo × sonoro).",
+  "description": "Jogo de percepção auditiva e consciência fonológica (surdo × sonoro), com faixas de 4–5 e 9–11 anos.",
   "lang": "pt-BR",
   "dir": "ltr",
   "start_url": "./",

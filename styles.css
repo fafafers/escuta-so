@@ -1282,3 +1282,114 @@ table.data .num { text-align: right; }
 .level-text { color: #2763c4; font-weight: 700; }
 .level-summary { background: #eef5ff; border-radius: 14px; padding: 10px 14px; }
 table.data td.wrap { white-space: normal; min-width: 220px; }
+
+/* =========================================================================
+ * Acabamento das faixas: telas menores
+ * ========================================================================= */
+.mode-grid.many .art-pair { padding: 6px; }
+.mode-grid.many .art-pair .critter { width: clamp(26px, 4.4vmin, 44px); }
+.mode-grid.many .mini-card { width: clamp(52px, 10vmin, 92px); height: clamp(52px, 10vmin, 92px); font-size: clamp(30px, 6vmin, 56px); }
+.mode-grid.many .art-drag .critter { width: clamp(64px, 12vmin, 120px); }
+.mode-grid.many .mini-card.tilt { width: clamp(40px, 7vmin, 68px); height: clamp(40px, 7vmin, 68px); font-size: clamp(24px, 4.4vmin, 42px); }
+@media (max-width: 560px) {
+  .group-grid { grid-template-columns: 1fr; grid-auto-rows: 1fr; gap: 16px; padding: 12px 0 4px; align-content: stretch; }
+  .group-card { min-height: 0; padding: 14px; gap: 6px; border-radius: 30px; }
+  .group-art { height: clamp(70px, 15vh, 150px); }
+  .brand .title { font-size: 34px; }
+  .mode-grid.many { grid-template-columns: 1fr; }
+  .mode-grid.many .mode-card { flex-direction: row; justify-content: flex-start; padding: 10px 16px; }
+  .mode-grid.many .mode-art { width: auto; height: 80px; }
+  .topbar .xp { padding: 6px 10px; }
+  .xp-num { display: none; }
+  .xp-bar { width: 56px; }
+  .xp-rank { font-size: 14px; }
+  .mission-map { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 22px 12px; }
+  .mission-node:nth-child(even) { transform: none; }
+  .game-title { display: none !important; }
+  .word-btn { min-width: 40vw; min-height: 96px; padding: 10px 12px; }
+  .letter-btn { width: 30vw; height: 30vw; }
+  .hidden-word { font-size: 13vw; letter-spacing: 3px; }
+  .cmp-row { flex-direction: column; gap: 8px; }
+  .cmp-card { min-width: 60vw; padding: 10px 16px; }
+  .chip-word { min-height: 52px; padding: 4px 12px; font-size: 22px; }
+  .slot-letter { width: 13vw; height: 15vw; font-size: 8vw; }
+  .tile { width: 15vw; height: 15vw; font-size: 9vw; }
+  .syl-btn { width: 32vw; height: 26vw; font-size: 10vw; }
+  .btn-undo { width: 64px; height: 64px; font-size: 28px; }
+  .code-slot { width: 15vw; height: 13vw; font-size: 5.5vw; }
+  .code-lights { gap: 10px; }
+  .code-light { width: 34px; height: 34px; }
+  .num-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .num-bubble { width: auto; min-height: 110px; }
+  .ear-row .word-btn { min-width: 34vw; min-height: 76px; }
+  .ear-label { min-width: 0; width: 100%; font-size: 18px; }
+  .claps-row { gap: 3vw; }
+  .drum { width: 42vw; height: 42vw; }
+  .claps-ok { width: 22vw; height: 22vw; font-size: 12vw; }
+  .claps-undo { width: 16vw; height: 16vw; font-size: 8vw; }
+  .cards.three { gap: 3vw; }
+  .cards.three .fig-card { width: 29vw; height: 29vw; border-radius: 22px; }
+  .cards.three .fig-card .fig-emoji { font-size: 19vw; }
+  .cards.four { display: grid; grid-template-columns: 1fr 1fr; gap: 3vw; }
+  .bushes { gap: 3vw; }
+  .bush { width: 26vw; height: 26vw; }
+  .bush-leaf, .bush .fig-emoji { font-size: 16vw; }
+  .model-card { width: 34vw; height: 34vw; }
+  .model-card .fig-emoji { font-size: 22vw; }
+  .debrief-title { font-size: 34px; }
+}
+@media (max-height: 540px) {
+  .group-grid { padding: 1vmin 0; gap: 2vmin; }
+  .group-card { min-height: 0; padding: 10px; gap: 4px; }
+  .group-art { height: 24vh; }
+  .brand .logo .critter { width: 48px; }
+  .brand .title { font-size: 32px; }
+  .mode-grid.many { gap: 1.6vmin; padding: 1vmin; }
+  .mode-grid.many .mode-art { height: 15vh; }
+  .mission-map { padding-top: 3vmin; gap: 3vmin 1.6vmin; }
+  .mission-node { padding: 10px 6px 6px; gap: 2px; }
+  .mission-node:nth-child(even) { transform: translateY(8px); }
+  .mission-ico { font-size: 34px; }
+  .mission-name { font-size: 14px; }
+  .mission-stars { font-size: 16px; }
+  .badges { display: none; }
+  .stage { gap: 2.4vmin; }
+  .signal { width: 52px; height: 52px; }
+  .word-btn { min-height: 80px; min-width: 150px; padding: 6px 16px; }
+  .word-txt { font-size: 32px; }
+  .letter-btn { width: 96px; height: 96px; font-size: 52px; }
+  .hidden-word { font-size: 48px; padding: 2px 12px; }
+  .slot-letter { width: 50px; height: 56px; font-size: 32px; }
+  .tile { width: 58px; height: 58px; font-size: 32px; }
+  .btn-check { min-height: 60px; font-size: 20px; }
+  .syl-btn { width: 130px; height: 84px; font-size: 40px; }
+  .num-bubble { width: 110px; min-height: 100px; }
+  .num { font-size: 44px; }
+  .chip-word { min-height: 48px; font-size: 22px; }
+  .cmp-card { padding: 8px 18px; }
+  .cmp-word { font-size: 40px; }
+  .model-card { width: 26vh; height: 26vh; }
+  .model-card .fig-emoji { font-size: 17vh; }
+  .cards.three .fig-card { width: 30vh; height: 30vh; }
+  .cards.three .fig-card .fig-emoji { font-size: 20vh; }
+  .drum { width: 34vh; height: 34vh; }
+  .drum-face { font-size: 22vh; }
+  .claps-ok { width: 90px; height: 90px; font-size: 50px; }
+  .beats { min-height: 30px; }
+  .beat { width: 28px; height: 28px; }
+  .bush { width: 24vh; height: 24vh; }
+  .bush-leaf, .bush .fig-emoji { font-size: 15vh; }
+  .fig-card.small { width: 22vh; height: 22vh; }
+  .fig-card.small .fig-emoji { font-size: 14vh; }
+  .hp-icon { font-size: 60px; }
+  .debrief { gap: 1vmin; }
+  .debrief .rstar { font-size: 48px; }
+}
+/* mapa: quando não cabe, começa do topo (centralizar cortaria a primeira linha) */
+.mission-map { align-content: safe center; }
+@media (max-height: 540px) {
+  .mission-map { align-content: start; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); padding-top: 18px; }
+  .stage-claps { display: grid; grid-template-columns: auto auto; grid-template-rows: 1fr auto; align-content: center; justify-content: center; column-gap: 5vw; row-gap: 10px; }
+  .stage-claps .model-row { grid-row: 1 / span 2; }
+  .stage-claps .beats { grid-column: 2; }
+}
