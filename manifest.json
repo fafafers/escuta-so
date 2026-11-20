@@ -1,7 +1,7 @@
 {
   "name": "Escuta Só!",
   "short_name": "Escuta Só!",
-  "description": "Jogo de percepção auditiva e consciência fonológica (surdo × sonoro), com faixas de 4–5 e 9–11 anos.",
+  "description": "Jogo de percepção auditiva, consciência fonológica e relação som-letra (surdo × sonoro), com faixas de 4–5, 6–8 e 9–11 anos.",
   "lang": "pt-BR",
   "dir": "ltr",
   "start_url": "./",

@@ -1,16 +1,17 @@
-/* Escuta Só! — jogo de discriminação auditiva de pares mínimos (surdo × sonoro).
+/* Escuta Só! — percepção auditiva, consciência fonológica e relação som-letra (surdo × sonoro).
  * JavaScript puro, sem frameworks e sem build. Todos os dados ficam no aparelho.
  *
  * Organização do arquivo:
- *   1. Núcleo: utilidades, faixas etárias, navegação, diálogos, desbloqueio de áudio, telas inicial e da fono
- *   2. Banco de dados, banco de palavras, áudio (tocar, gravar, recortar silêncio)
- *   3. Motor do jogo, atividades dos Pequenos Ouvintes, recompensas e álbum
- *   4. Área da fono: rodada, crianças, evolução, backup e ajustes
- *   (as partes seguintes acrescentam as atividades dos Detetives do Som e o restante)
+ *   1.  Núcleo: utilidades, faixas etárias, navegação, diálogos, áudio, telas inicial e da fono
+ *   2.  Banco de dados (com migrações), banco de palavras, áudio (tocar, gravar, efeitos)
+ *   3.  Motor do jogo e atividades: 3a pares mínimos · 3b Pequenos Ouvintes · 3c Detetives do Som
+ *       · 3d sons sozinhos, letras e posição do som · 3e escada, níveis, familiarização e produção
+ *       · 3f plano de sessão
+ *   4.  Área da fono: rodada, plano, gravação, listas, crianças, evolução, backup e ajustes
  */
 'use strict';
 
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '3.0.0';
 
 /* =========================================================================
  * 1. NÚCLEO
