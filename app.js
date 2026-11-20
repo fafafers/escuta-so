@@ -268,7 +268,6 @@ function fonoButton() {
   return btn;
 }
 
-function startGame() { go('menu'); }
 
 Screens.start = {
   render(app) {
@@ -1066,3 +1065,501 @@ function editPairDialog(pair, onDone) {
       h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Salvar')),
   ], { dismissible: false, cls: 'wide' });
 }
+
+/* =========================================================================
+ * 3. MODOS DE JOGO, RECOMPENSAS E ÁLBUM
+ * ========================================================================= */
+
+const CRITTER_A = { color: '#3a86ff', shape: 'round' };    // "igual": dois destes
+const CRITTER_B = { color: '#fb8500', shape: 'square' };   // "diferente": um de cada
+const HELPERS = [
+  { color: '#2ec4b6', shape: 'drop' },
+  { color: '#8e6cd1', shape: 'round' },
+  { color: '#ff5d8f', shape: 'square' },
+];
+const STICKERS = ['🦄', '🚀', '🐳', '🦖', '🍦', '🎈', '🌻', '🐞', '🌈', '🍉', '🎸', '🦜',
+  '🐙', '🍩', '🚂', '🎠', '🧁', '🦩', '🐠', '🪁', '🍭', '🦔', '🐢', '🦋'];
+
+function startGame() { go('who'); }
+
+async function allChildren() {
+  return (await DB.all('children')).sort((a, b) => a.nick.localeCompare(b.nick, 'pt-BR'));
+}
+async function sessionsOf(childId) {
+  return (await DB.all('sessions')).filter(s => s.childId === childId).sort((a, b) => a.date.localeCompare(b.date));
+}
+/** Pares escolhidos pela fono para a criança (padrão: os pares-alvo P×B, T×D, CH×J). */
+async function roundPairIds(childId) {
+  const saved = await DB.kv('round:' + childId, null);
+  if (Array.isArray(saved)) return saved;
+  return Bank.pairs.filter(p => TARGET_CONTRASTS.includes(p.contrast)).map(p => p.id);
+}
+async function pairsForMode(mode, childId) {
+  const ids = new Set(await roundPairIds(childId));
+  return Bank.pairs.filter(p => ids.has(p.id) && (!MODES[mode].needsFigure || p.figure));
+}
+
+/** Monta a rodada: contrastes intercalados; no modo 1 ~40% das rodadas são "iguais";
+ *  nos modos 2 e 3 a palavra-alvo e o lado da figura certa ficam equilibrados. */
+function buildTrials(mode, pairs, n) {
+  const seq = [];
+  while (seq.length < n) {
+    const groups = {};
+    for (const p of shuffle(pairs)) (groups[p.contrast] = groups[p.contrast] || []).push(p);
+    const lists = shuffle(Object.values(groups));
+    const longest = Math.max(...lists.map(l => l.length));
+    for (let i = 0; i < longest; i++) for (const l of lists) if (l[i]) seq.push(l[i]);
+  }
+  seq.length = n;
+  for (let i = 1; i < n; i++) {           // evita o mesmo par duas vezes seguidas
+    if (seq[i] !== seq[i - 1]) continue;
+    const j = seq.findIndex((p, k) => k > i && p !== seq[i]);
+    if (j > 0) [seq[i], seq[j]] = [seq[j], seq[i]];
+  }
+  const balanced = k => shuffle(Array.from({ length: n }, (_, i) => i < k));
+  if (mode === 'same') {
+    const isSame = balanced(Math.round(n * 0.4));
+    const startA = balanced(Math.round(n / 2));
+    return seq.map((pair, i) => {
+      const s = startA[i] ? 'a' : 'b';
+      return { pair, order: isSame[i] ? [s, s] : [s, other(s)] };
+    });
+  }
+  const targetA = balanced(Math.round(n / 2));
+  const targetLeft = balanced(Math.round(n / 2));
+  return seq.map((pair, i) => ({ pair, target: targetA[i] ? 'a' : 'b', targetLeft: targetLeft[i] }));
+}
+
+/* ---------- efeitos de comemoração ---------- */
+function burst(el, glyphs = ['⭐', '✨', '🌟', '💛']) {
+  const r = el.getBoundingClientRect();
+  const layer = h('div', { class: 'burst', style: `left:${r.left + r.width / 2}px;top:${r.top + r.height / 2}px` });
+  const count = 14;
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+    const d = 0.5 * Math.max(r.width, 140) + Math.random() * 70;
+    layer.append(h('span', {
+      style: `--dx:${Math.round(Math.cos(a) * d)}px;--dy:${Math.round(Math.sin(a) * d)}px;--rot:${rand(360) - 180}deg;animation-delay:${rand(120)}ms`,
+    }, glyphs[i % glyphs.length]));
+  }
+  document.body.append(layer);
+  setTimeout(() => layer.remove(), 1600);
+}
+async function celebrate(el) {
+  Sound.chime('win');
+  el.classList.add('win');
+  burst(el);
+  await sleep(1300);
+  el.classList.remove('win');
+}
+
+/* ---------- quem vai jogar? ---------- */
+Screens.who = {
+  async render(app, params, alive) {
+    const kids = await allChildren();
+    if (!alive()) return;
+    if (!kids.length) { State.child = GUEST; go('menu'); return; }
+    const pick = k => { State.child = k; Sound.chime('tap'); go('menu'); };
+    const card = k => h('button', { class: 'who-card', type: 'button', 'aria-label': k.nick, onclick: () => pick(k) },
+      h('span', { class: 'avatar big' }, k.avatar), h('span', { class: 'who-name' }, k.nick));
+    add(app, [
+      h('div', { class: 'topbar' }, iconBtn('🏠', 'Início', () => go('start')), h('div', { class: 'spacer' }), fonoButton()),
+      h('div', { class: 'who-grid' }, kids.map(card), card(GUEST)),
+    ]);
+  },
+};
+
+/* ---------- motor do jogo ---------- */
+function waitChoice(options) {
+  return new Promise(resolve => { for (const [el, value] of options) el.onclick = () => resolve(value); });
+}
+function revealEl(pair, side) {
+  if (pair.figure) return figureEl(pair, side);
+  return h('span', { class: 'reveal-critter', html: critter(side === 'a' ? CRITTER_A : CRITTER_B) });
+}
+/** Depois de um erro: sem som de "errado" e sem X. Toca as duas palavras do par,
+ *  destacando cada figura enquanto ela toca, e mostra com um brilho qual era a certa. */
+async function showCorrection(g, steps, correctEl) {
+  await sleep(450);
+  if (!g.alive()) return;
+  await g.play(steps, 'busy');
+  if (!g.alive()) return;
+  correctEl.classList.add('hint-correct');
+  await sleep(1200);
+  correctEl.classList.remove('hint-correct');
+}
+const baseResult = pair => ({ pairId: pair.id, contrast: pair.contrast, words: `${pair.a.text} × ${pair.b.text}` });
+
+function flyTo(el, target) {
+  const a = el.getBoundingClientRect();
+  const b = target.getBoundingClientRect();
+  const dx = (+el.dataset.dx || 0) + (b.left + b.width / 2) - (a.left + a.width / 2);
+  const dy = (+el.dataset.dy || 0) + (b.top + b.height / 2) - (a.top + a.height / 2);
+  el.classList.add('flying');
+  el.style.transform = `translate(${dx}px, ${dy}px) scale(.3)`;
+}
+
+/** Arrastar uma figura até o bichinho (toque simples também vale). */
+function dragChoice(cards, zone, stage) {
+  return new Promise(resolve => {
+    const offs = [];
+    const finish = (idx, dropped) => { offs.forEach(off => off()); resolve({ idx, dropped }); };
+    cards.forEach((card, idx) => {
+      let st = null;
+      const reset = () => { card.dataset.dx = 0; card.dataset.dy = 0; card.style.transform = ''; };
+      const isOver = () => {
+        const a = card.getBoundingClientRect();
+        const b = zone.getBoundingClientRect();
+        const cx = a.left + a.width / 2;
+        const cy = a.top + a.height / 2;
+        const pad = 40;
+        return cx > b.left - pad && cx < b.right + pad && cy > b.top - pad && cy < b.bottom + pad;
+      };
+      const down = e => {
+        if (stage.dataset.lock || st) return;
+        e.preventDefault();
+        try { card.setPointerCapture(e.pointerId); } catch (_) { /* ok */ }
+        st = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        card.classList.add('dragging');
+      };
+      const move = e => {
+        if (!st || e.pointerId !== st.id) return;
+        const dx = e.clientX - st.x;
+        const dy = e.clientY - st.y;
+        card.dataset.dx = dx;
+        card.dataset.dy = dy;
+        card.style.transform = `translate(${dx}px, ${dy}px) scale(1.06)`;
+        zone.classList.toggle('drop-hover', isOver());
+      };
+      const up = e => {
+        if (!st || e.pointerId !== st.id) return;
+        const moved = Math.hypot(e.clientX - st.x, e.clientY - st.y);
+        st = null;
+        card.classList.remove('dragging');
+        zone.classList.remove('drop-hover');
+        if (isOver()) { finish(idx, true); return; }
+        reset();
+        if (moved < 14) finish(idx, false);    // foi um toque
+      };
+      const cancel = () => {
+        if (!st) return;
+        st = null;
+        card.classList.remove('dragging');
+        zone.classList.remove('drop-hover');
+        reset();
+      };
+      card.addEventListener('pointerdown', down);
+      card.addEventListener('pointermove', move);
+      card.addEventListener('pointerup', up);
+      card.addEventListener('pointercancel', cancel);
+      offs.push(() => {
+        card.removeEventListener('pointerdown', down);
+        card.removeEventListener('pointermove', move);
+        card.removeEventListener('pointerup', up);
+        card.removeEventListener('pointercancel', cancel);
+      });
+    });
+  });
+}
+
+Object.assign(MODES, {
+  /* 1. IGUAL OU DIFERENTE: duas palavras com pausa; a criança escolhe os bichinhos iguais ou diferentes. */
+  same: {
+    id: 'same',
+    name: 'Igual ou diferente?',
+    needsFigure: false,
+    art: () => `<span class="art-pair">${critter(CRITTER_A)}${critter(CRITTER_A)}</span>`
+      + `<span class="art-pair">${critter(CRITTER_A)}${critter(CRITTER_B)}</span>`,
+    async run(trial, g) {
+      const { pair, order } = trial;
+      const same = order[0] === order[1];
+      const bubbles = order.map(() => h('div', { class: 'bubble', html: SPEAKER_SVG }));
+      const bSame = h('button', { class: 'answer answer-same', type: 'button', 'aria-label': 'Igual', html: `<span class="critters">${critter(CRITTER_A)}${critter(CRITTER_A)}</span>` });
+      const bDiff = h('button', { class: 'answer answer-diff', type: 'button', 'aria-label': 'Diferente', html: `<span class="critters">${critter(CRITTER_A)}${critter(CRITTER_B)}</span>` });
+      g.stage.replaceChildren(h('div', { class: 'bubbles' }, bubbles), h('div', { class: 'answers' }, bSame, bDiff));
+      const steps = order.map((side, i) => ({ pair, side, el: bubbles[i] }));
+      let replays = -1;
+      const listen = async () => { replays++; const r = await g.play(steps); if (!r.cancelled) g.lock(''); };
+      g.replayBtn.onclick = listen;
+      listen();
+      const saidSame = await waitChoice([[bSame, true], [bDiff, false]]);
+      g.endInput([bSame, bDiff]);
+      const correct = saidSame === same;
+      if (correct) {
+        await celebrate(saidSame ? bSame : bDiff);
+      } else {
+        order.forEach((side, i) => { bubbles[i].classList.add('revealed'); bubbles[i].replaceChildren(revealEl(pair, side)); });
+        await showCorrection(g, steps, same ? bSame : bDiff);
+      }
+      return {
+        ...baseResult(pair), stim: order.join('-'), expected: same ? 'igual' : 'diferente',
+        answer: saidSame ? 'igual' : 'diferente', correct, replays: Math.max(0, replays),
+      };
+    },
+  },
+
+  /* 2. QUAL EU FALEI?: duas figuras (lados sorteados), toca uma palavra. */
+  which: {
+    id: 'which',
+    name: 'Qual eu falei?',
+    needsFigure: true,
+    art: () => '<span class="art-cards"><span class="mini-card">🧀</span><span class="mini-card">🧔</span></span>',
+    async run(trial, g) {
+      const { pair, target, targetLeft } = trial;
+      const sides = targetLeft ? [target, other(target)] : [other(target), target];
+      const cards = sides.map(s => h('button', { class: 'answer fig-card', type: 'button', 'aria-label': pair[s].text }, figureEl(pair, s)));
+      g.stage.replaceChildren(h('div', { class: 'cards' }, cards));
+      let replays = -1;
+      const listen = async () => { replays++; const r = await g.play([{ pair, side: target }]); if (!r.cancelled) g.lock(''); };
+      g.replayBtn.onclick = listen;
+      listen();
+      const idx = await waitChoice(cards.map((c, i) => [c, i]));
+      g.endInput(cards);
+      const correct = sides[idx] === target;
+      const right = cards[sides.indexOf(target)];
+      if (correct) await celebrate(right);
+      else await showCorrection(g, sides.map((s, i) => ({ pair, side: s, el: cards[i] })), right);
+      return {
+        ...baseResult(pair), stim: target, expected: pair[target].text, answer: pair[sides[idx]].text,
+        correct, replays: Math.max(0, replays), targetSide: targetLeft ? 'esquerda' : 'direita',
+      };
+    },
+  },
+
+  /* 3. AJUDE O BICHINHO: o bichinho "pede" uma palavra; a criança arrasta a figura até ele. */
+  drag: {
+    id: 'drag',
+    name: 'Ajude o bichinho',
+    needsFigure: true,
+    art: () => `<span class="art-drag">${critter(HELPERS[0])}<span class="mini-card tilt">🧀</span></span>`,
+    async run(trial, g) {
+      const { pair, target, targetLeft } = trial;
+      const sides = targetLeft ? [target, other(target)] : [other(target), target];
+      const talkBtn = h('button', { class: 'buddy-bubble', type: 'button', 'aria-label': 'Ouvir de novo', html: SPEAKER_SVG });
+      const body = h('div', { class: 'buddy-body', html: critter(g.helper) });
+      const buddy = h('div', { class: 'buddy' }, body, talkBtn);
+      const cards = sides.map(s => h('button', { class: 'answer fig-card draggable', type: 'button', 'aria-label': pair[s].text }, figureEl(pair, s)));
+      g.stage.replaceChildren(buddy, h('div', { class: 'cards' }, cards));
+      let replays = -1;
+      let answered = false;
+      const listen = async () => {
+        if (answered) return;
+        replays++;
+        buddy.classList.add('talking');
+        const r = await g.play([{ pair, side: target }]);
+        if (!r.cancelled) { buddy.classList.remove('talking'); g.lock(''); }
+      };
+      g.replayBtn.onclick = listen;
+      talkBtn.onclick = listen;
+      listen();
+      const { idx, dropped } = await dragChoice(cards, buddy, g.stage);
+      answered = true;
+      talkBtn.onclick = null;
+      g.endInput(cards);
+      buddy.classList.remove('talking');
+      const correct = sides[idx] === target;
+      const right = cards[sides.indexOf(target)];
+      if (correct) {
+        flyTo(cards[idx], body);
+        await sleep(380);
+        await celebrate(body);
+      } else {
+        cards[idx].style.transform = '';
+        await sleep(300);
+        await showCorrection(g, sides.map((s, i) => ({ pair, side: s, el: cards[i] })), right);
+      }
+      return {
+        ...baseResult(pair), stim: target, expected: pair[target].text, answer: pair[sides[idx]].text,
+        correct, replays: Math.max(0, replays), interaction: dropped ? 'arrastou' : 'tocou',
+      };
+    },
+  },
+});
+
+function renderNoPairs(app, M) {
+  add(app, [
+    h('div', { class: 'topbar' }, iconBtn('🏠', 'Voltar', () => go('menu'))),
+    h('div', { class: 'no-pairs' },
+      h('div', { class: 'no-pairs-art', html: critter({ color: '#8e6cd1', shape: 'drop' }) }),
+      h('p', null, h('strong', null, 'Nenhum par disponível para este modo.')),
+      h('p', { class: 'muted' }, M.needsFigure
+        ? 'Este modo usa figuras. Na área da fono, em “Rodada”, escolha pares marcados como “tem figura”.'
+        : 'Na área da fono, em “Rodada”, escolha os pares desta criança.')),
+  ]);
+}
+
+Screens.game = {
+  async render(app, { mode }, alive) {
+    const M = MODES[mode];
+    const child = State.child || GUEST;
+    const pairs = await pairsForMode(mode, child.id);
+    if (!alive()) return;
+    if (!pairs.length) { renderNoPairs(app, M); return; }
+
+    const n = Math.max(1, State.settings.trials);
+    const trials = buildTrials(mode, pairs, n);
+    const session = {
+      id: uid(), childId: child.id, date: new Date().toISOString(), mode, planned: n, complete: false,
+      pauseMs: State.settings.pauseMs, appVersion: APP_VERSION, trials: [],
+    };
+    let left = false;
+    onLeave(() => {
+      left = true;
+      // Saiu no meio: guarda o que já foi jogado, marcado como incompleto.
+      if (!session.complete && session.trials.length) DB.put('sessions', session).catch(e => console.error(e));
+    });
+
+    const dots = h('div', { class: 'dots', 'aria-hidden': 'true' }, trials.map(() => h('span', { class: 'dot' })));
+    const ttsBadge = h('span', { class: 'tts-badge', hidden: true, title: 'Palavra sem gravação: tocando a voz sintética do aparelho, que é menos precisa.' }, 'voz sintética');
+    const replayBtn = h('button', { class: 'btn-replay', type: 'button', 'aria-label': 'Ouvir de novo', title: 'Ouvir de novo', html: SPEAKER_SVG });
+    const stage = h('div', { class: 'stage stage-' + mode });
+    add(app, [
+      h('div', { class: 'game-top' },
+        h('div', { class: 'game-top-side' }, iconBtn('🏠', 'Sair do jogo', askExit), ttsBadge),
+        replayBtn,
+        h('div', { class: 'game-top-side end' }, dots)),
+      stage,
+    ]);
+
+    function askExit() {
+      openOverlay(h('div', { class: 'exit-ask' },
+        h('div', { class: 'exit-art', html: critter(CRITTER_A) }),
+        h('div', { class: 'exit-actions' },
+          h('button', { class: 'big-choice', type: 'button', 'aria-label': 'Sair do jogo', onclick: () => go('menu') }, '🏠'),
+          h('button', { class: 'big-choice go-on', type: 'button', 'aria-label': 'Continuar jogando', onclick: closeOverlay }, '▶️'))),
+      { cls: 'exit-dialog' });
+    }
+
+    const g = {
+      stage,
+      replayBtn,
+      helper: HELPERS[rand(HELPERS.length)],
+      tts: false,
+      alive: () => alive() && !left,
+      lock(state) { stage.dataset.lock = state || ''; },
+      async play(steps, lock = 'listen') {
+        g.lock(lock);
+        steps.forEach(s => s.el && s.el.classList.remove('speaking'));
+        replayBtn.classList.add('playing');
+        const r = await Sound.sequence(steps.map(s => ({
+          pair: s.pair,
+          side: s.side,
+          onStart: () => s.el && s.el.classList.add('speaking'),
+          onEnd: () => s.el && s.el.classList.remove('speaking'),
+        })), State.settings.pauseMs);
+        if (!r.cancelled) {
+          replayBtn.classList.remove('playing');
+          if (r.tts) g.tts = true;
+          ttsBadge.hidden = !r.tts;
+        }
+        return r;
+      },
+      endInput(els) {
+        els.forEach(e => { e.onclick = null; });
+        replayBtn.onclick = null;
+        Sound.stop();
+        replayBtn.classList.remove('playing');
+        stage.querySelectorAll('.speaking').forEach(e => e.classList.remove('speaking'));
+        g.lock('busy');
+      },
+    };
+
+    for (let i = 0; i < trials.length; i++) {
+      await sleep(i === 0 ? 500 : 300);
+      if (!g.alive()) return;
+      dots.children[i].classList.add('current');
+      g.tts = false;
+      const res = await M.run(trials[i], g);
+      if (!g.alive()) return;
+      res.tts = g.tts;
+      session.trials.push(res);
+      dots.children[i].className = 'dot done';
+    }
+    session.complete = true;
+    await DB.put('sessions', session);
+    const hits = session.trials.filter(t => t.correct).length;
+    const reward = await grantReward(child.id, hits / session.trials.length);
+    if (g.alive()) go('reward', { ...reward, mode });
+  },
+};
+
+/* ---------- estrelas, figurinhas e álbum ---------- */
+async function getAlbum(childId) {
+  const a = await DB.kv('album:' + childId, null);
+  return a && a.stickers ? a : { stickers: {}, stars: 0 };
+}
+async function grantReward(childId, acc) {
+  const stars = acc >= 0.9 ? 3 : acc >= 0.6 ? 2 : 1;     // sempre ganha pelo menos 1 estrela
+  const album = await getAlbum(childId);
+  const missing = STICKERS.filter(s => !album.stickers[s]);
+  const sticker = missing.length ? missing[rand(missing.length)] : STICKERS[rand(STICKERS.length)];
+  const isNew = !album.stickers[sticker];
+  album.stickers[sticker] = (album.stickers[sticker] || 0) + 1;
+  album.stars = (album.stars || 0) + stars;
+  await DB.setKv('album:' + childId, album);
+  return { stars, sticker, isNew };
+}
+
+Screens.reward = {
+  async render(app, { stars = 1, sticker = '🌟', isNew = false, mode = 'same' }, alive) {
+    const starEls = [1, 2, 3].map(i => h('span', { class: 'rstar' + (i <= stars ? ' earned' : '') }, '⭐'));
+    const buddy = h('div', { class: 'reward-critter', html: critter(CRITTER_A) });
+    const gift = h('button', { class: 'gift', type: 'button', 'aria-label': 'Abrir o presente' }, '🎁');
+    const reveal = h('div', { class: 'sticker-reveal', hidden: true },
+      h('span', { class: 'sticker-big' }, sticker),
+      isNew && h('span', { class: 'new-tag', 'aria-hidden': 'true' }, '✨'));
+    const actions = h('div', { class: 'reward-actions', hidden: true },
+      iconBtn('🏠', 'Voltar ao menu', () => go('menu')),
+      iconBtn('🔁', 'Jogar de novo', () => go('game', { mode })),
+      iconBtn('📖', 'Ver o álbum', () => go('album')));
+    add(app, h('div', { class: 'reward' },
+      h('div', { class: 'reward-stars' }, starEls),
+      h('div', { class: 'reward-mid' }, buddy, gift, reveal),
+      actions));
+    for (const [i, el] of starEls.entries()) {
+      await sleep(i === 0 ? 300 : 450);
+      if (!alive()) return;
+      el.classList.add('show');
+      if (i < stars) Sound.chime('star');
+    }
+    buddy.classList.add('win');
+    gift.classList.add('ready');
+    gift.onclick = () => {
+      gift.onclick = null;
+      gift.classList.add('opening');
+      Sound.chime('open');
+      setTimeout(() => {
+        if (!alive()) return;
+        gift.hidden = true;
+        reveal.hidden = false;
+        burst(reveal, ['✨', '🎉', '⭐', '💫']);
+        actions.hidden = false;
+      }, 500);
+    };
+  },
+};
+
+Screens.album = {
+  async render(app, params, alive) {
+    const child = State.child || GUEST;
+    const album = await getAlbum(child.id);
+    if (!alive()) return;
+    const got = STICKERS.filter(s => album.stickers[s]).length;
+    add(app, [
+      h('div', { class: 'topbar' },
+        iconBtn('⬅️', 'Voltar', () => go('menu')),
+        h('div', { class: 'child-chip' }, h('span', { class: 'avatar' }, child.avatar), h('span', null, child.nick)),
+        h('div', { class: 'spacer' }),
+        h('div', { class: 'album-score', title: `${album.stars} estrelas · ${got} de ${STICKERS.length} figurinhas` },
+          h('span', null, '⭐ ', album.stars), h('span', null, '🃏 ', `${got}/${STICKERS.length}`))),
+      h('div', { class: 'album-grid' }, STICKERS.map(s => {
+        const c = album.stickers[s] || 0;
+        if (!c) return h('div', { class: 'slot' }, h('span', { class: 'slot-q' }, '?'));
+        const slot = h('button', { class: 'slot got', type: 'button', 'aria-label': 'figurinha' },
+          h('span', { class: 'slot-emoji' }, s), c > 1 && h('span', { class: 'slot-count' }, '×' + c));
+        slot.onclick = () => { slot.classList.remove('win'); void slot.offsetWidth; slot.classList.add('win'); Sound.chime('tap'); };
+        return slot;
+      })),
+    ]);
+  },
+};
