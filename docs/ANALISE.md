@@ -122,7 +122,7 @@ Revisão da lista que você mandou:
 - **Nova faixa 6–8 anos, "Exploradores das Letras"**: Trem do som, Vibra ou sopra?, Som secreto, Letra escondida, Onde mora o som (nível fácil) e Mesmo começo com as palavras escritas.
 - **Plano de sessão**: por exemplo, aquecimento de 3 min → atividade-alvo → jogo livre, rodando em sequência sem voltar ao menu.
 - **Relatório por posição (início, meio, fim) e por nível/degrau**, com gráfico. A posição é calculada também nas atividades de pares (onde o par difere: *pote/bote* = início; *nata/nada* = fim).
-- **Pseudopalavras:** pares sem sentido que seguem a fonotática do PB (*tafo/dafo*, *tobi/dobi*, *cupi/gupi*, *fapo/vapo*, *fema/vema*, *pafi/bafi*). Conferi que nenhuma é palavra comum. Elas aparecem no nível mais alto de "Igual ou diferente?" e no "Qual eu falei?" escrito, para tirar a pista do significado. A fono pode editá-las como qualquer par.
+- **Pseudopalavras:** pares sem sentido que seguem a fonotática do PB (*tafo/dafo*, *tobi/dobi*, *cupi/gupi*, *fapo/vapo*, *fema/vema*, *pafi/bafi*). Conferi que nenhuma é palavra comum. Elas aparecem no nível 3 de "Igual ou diferente?", para tirar a pista do significado (em identificação com figura não dá, porque pseudopalavra não tem figura). A fono pode editá-las como qualquer par.
 
 ## 5. O que fica de fora (e por quê)
 
