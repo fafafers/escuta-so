@@ -20,7 +20,7 @@ Abra o endereço acima uma vez, com internet, e instale:
 
 Depois disso o jogo abre pelo ícone e **funciona sem internet**.
 
-> **Já usava a versão anterior?** É só abrir o jogo com internet: a atualização é baixada sozinha e passa a valer na abertura seguinte. As gravações, as crianças e o histórico continuam lá (as crianças já cadastradas entram em Pequenos Ouvintes; troque a faixa de quem precisar em **Crianças**). Por segurança, faça um backup antes (item 7).
+> **Já usava a versão anterior?** É só abrir o jogo com internet: a atualização é baixada sozinha e passa a valer na abertura seguinte. As gravações, as crianças e o histórico continuam lá (as crianças já cadastradas entram em Pequenos Ouvintes; troque a faixa de quem precisar em **Crianças**). Por segurança, faça um backup antes (item 7). Se aparecer a mensagem **"Atualizando o Escuta Só!…"**, feche o jogo nas outras abas ou janelas (ou feche o app e abra de novo).
 
 ## 2. Entrar na área da fono
 

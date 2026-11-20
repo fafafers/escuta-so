@@ -10,7 +10,7 @@
  */
 'use strict';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 
 /* =========================================================================
  * 1. NÚCLEO
@@ -483,7 +483,8 @@ const DB = {
         }
         if (e.oldVersion >= 1 && e.oldVersion < 2) migrateToV2(req.transaction);
       };
-      req.onblocked = () => toast('Feche as outras abas do Escuta Só! para terminar a atualização.', 6000);
+      // A versão antiga continua aberta em outra aba/janela e segura o banco: avisa e espera ela fechar.
+      req.onblocked = () => { if (this.onBlocked) this.onBlocked(); };
       req.onsuccess = () => {
         this.db = req.result;
         // Se outra aba abrir uma versão mais nova, esta fecha o banco para não travar a atualização.
@@ -651,7 +652,16 @@ function requestPersistentStorage() {
   } catch (_) { /* ok */ }
 }
 
+function showUpdateWait() {
+  $('#app').replaceChildren(h('div', { class: 'update-wait' },
+    h('div', { class: 'logo', html: critter({ color: '#3a86ff', shape: 'round', cls: 'logo-critter' }) }),
+    h('h1', null, 'Atualizando o Escuta Só!…'),
+    h('p', null, 'A versão antiga do jogo ainda está aberta em outra aba ou janela. Feche o Escuta Só! nas outras abas (ou feche o app e abra de novo) para terminar a atualização.'),
+    h('p', { class: 'muted' }, 'Seus dados estão guardados: nada foi apagado.')));
+}
+
 InitHooks.push(async () => {
+  DB.onBlocked = showUpdateWait;
   await DB.open();
   await Bank.seed();
   await Bank.load();
