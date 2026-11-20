@@ -89,8 +89,10 @@ const AGE_GROUPS = {
     trials: 8,
     trialOptions: [8, 9, 10],
     targets: ['pb', 'td', 'chj'],
-    activities: ['same', 'which', 'drag', 'rhyme', 'claps', 'onset', 'sounds', 'memory', 'train', 'voicing'],
-    offByDefault: [],
+    activities: ['familiar', 'same', 'which', 'drag', 'rhyme', 'claps', 'onset', 'sounds', 'memory', 'train', 'voicing', 'speak'],
+    offByDefault: ['speak'],          // produção: a fono liga quando for acompanhar
+    reads: false,                     // ainda não lê: nada de palavra escrita
+    startLevels: { same: 2, which: 2, drag: 1, rhyme: 1, onset: 1, claps: 1, sounds: 1, train: 1, voicing: 1 },
   },
   detetives: {
     id: 'detetives',
@@ -103,8 +105,10 @@ const AGE_GROUPS = {
     trials: 10,
     trialOptions: [8, 10, 12],
     targets: ['td', 'kg', 'fv'],
-    activities: ['hidden', 'position', 'silly', 'dictation', 'secret', 'voicing', 'letter', 'noise', 'chopped', 'code', 'intruder', 'blitz', 'dichotic'],
-    offByDefault: ['blitz', 'dichotic'],   // a fono liga quando quiser
+    activities: ['familiar', 'hidden', 'position', 'silly', 'dictation', 'secret', 'voicing', 'letter', 'noise', 'chopped', 'code', 'intruder', 'speak', 'blitz', 'dichotic'],
+    offByDefault: ['blitz', 'dichotic', 'speak'],   // a fono liga quando quiser
+    reads: true,
+    startLevels: { same: 2, which: 3, hidden: 2, position: 2, train: 3, voicing: 2, secret: 2, letter: 2, intruder: 2, rhyme: 2, onset: 2 },
   },
 };
 const GROUP_ORDER = ['pequenos', 'detetives'];
@@ -446,11 +450,13 @@ document.addEventListener('DOMContentLoaded', init);
 
 /* ---------- IndexedDB: tudo fica no aparelho ---------- */
 const STORES = ['pairs', 'audio', 'children', 'sessions', 'kv'];
-const DB_VERSION = 2;
+const DB_VERSION = 3;
+const EXTRA_STORES = ['kidAudio'];   // fora do backup: voz da criança fica só no aparelho
 
 /* Versões do banco:
  *   1 — primeira versão (pares, gravações, crianças, sessões, ajustes)
  *   2 — faixas etárias: cada par ganha "groups", cada criança e cada sessão ganham "group".
+ *   3 — store "kidAudio" (gravações da criança em "Eu falo, você ouve").
  * A migração só acrescenta campos: nada é apagado. Dados antigos sem esses campos
  * também são aceitos pelo código (ver normPair / kidGroup / normSession). */
 function migrateToV2(tx) {
@@ -478,8 +484,8 @@ const DB = {
       const req = indexedDB.open('escuta-so', DB_VERSION);
       req.onupgradeneeded = e => {
         const db = req.result;
-        for (const s of STORES) {
-          if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: s === 'audio' || s === 'kv' ? 'key' : 'id' });
+        for (const s of [...STORES, ...EXTRA_STORES]) {
+          if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: s === 'audio' || s === 'kv' || s === 'kidAudio' ? 'key' : 'id' });
         }
         if (e.oldVersion >= 1 && e.oldVersion < 2) migrateToV2(req.transaction);
       };
@@ -560,7 +566,9 @@ const DETECTIVE_PAIRS = [
   ['fv', 'faca', '🔪', 'vaca', '🐄'], ['fv', 'fila', '', 'vila', '🏘️'], ['fv', 'foto', '📷', 'voto', '🗳️'],
   ['fv', 'fala', '🗣️', 'vala', ''], ['fv', 'feio', '👹', 'veio', ''], ['fv', 'fé', '🙏', 'vê', '👀'],
 ];
-const SEED_VERSION = 2;
+const SEED_VERSION = 3;
+/* Pseudopalavras (fonotática do PB, sem significado): tiram a pista do sentido no nível mais alto. */
+const PSEUDO_PAIRS = [['td', 'tafo', 'dafo'], ['td', 'tobi', 'dobi'], ['kg', 'cupi', 'gupi'], ['fv', 'fapo', 'vapo'], ['fv', 'fema', 'vema'], ['pb', 'pafi', 'bafi']];
 const sameText = (x, y) => x.trim().toLowerCase() === y.trim().toLowerCase();
 
 const Bank = {
@@ -594,6 +602,14 @@ const Bank = {
           p.groups = [...p.groups, 'detetives'];
           changed.add(p);
         }
+      });
+    }
+    if (ver < 3) {
+      PSEUDO_PAIRS.forEach(([contrast, at, bt], i) => {
+        if (pairs.some(x => sameText(x.a.text, at) && sameText(x.b.text, bt))) return;
+        const p = { id: 'ps' + (i + 1), contrast, a: word(at, ''), b: word(bt, ''), figure: false, pseudo: true, order: ++order, groups: GROUP_ORDER.slice() };
+        pairs.push(p);
+        changed.add(p);
       });
     }
     DETECTIVE_PAIRS.forEach(([contrast, at, ae, bt, be], i) => {
@@ -1472,12 +1488,12 @@ async function roundPairIds(childId, gid) {
   if (!Array.isArray(saved) && gid === 'pequenos') saved = await DB.kv('round:' + childId, null);   // versão 1
   if (Array.isArray(saved)) return saved;
   const G = groupOf(gid);
-  return Bank.inGroup(gid).filter(p => G.targets.includes(p.contrast)).map(p => p.id);
+  return Bank.inGroup(gid).filter(p => !p.pseudo && G.targets.includes(p.contrast)).map(p => p.id);
 }
 function saveRoundPairIds(childId, gid, ids) { return DB.setKv(`round:${childId}:${gid}`, ids); }
 async function pairsForActivity(def, childId, gid) {
   const ids = new Set(await roundPairIds(childId, gid));
-  return Bank.inGroup(gid).filter(p => ids.has(p.id)
+  return Bank.inGroup(gid).filter(p => ids.has(p.id) && !p.pseudo
     && (!def.needsFigure || p.figure)
     && (!def.needsAudio || (Bank.hasAudio(p, 'a') && Bank.hasAudio(p, 'b'))));
 }
@@ -1593,6 +1609,17 @@ async function showCorrection(g, steps, correctEl) {
   correctEl.classList.remove('hint-correct');
 }
 const baseResult = pair => ({ pairId: pair.id, contrast: pair.contrast, words: `${pair.a.text} × ${pair.b.text}` });
+/** Opções de identificação: as duas palavras do par e, nos níveis mais altos, palavras de outros
+ *  pares com figura (de preferência do mesmo contraste). Devolve [[par, lado], …]. */
+function idOptions(trial, g, count) {
+  const { pair, target, targetLeft } = trial;
+  const base = targetLeft ? [[pair, target], [pair, other(target)]] : [[pair, other(target)], [pair, target]];
+  if (count <= 2) return base;
+  const pool = shuffle(g.ctx.pairs.filter(p => p !== pair && (p.figure || !p.groups)));
+  const extra = [...pool.filter(p => p.contrast === pair.contrast), ...pool.filter(p => p.contrast !== pair.contrast)]
+    .slice(0, count - 2).map(p => [p, rand(2) ? 'a' : 'b']);
+  return shuffle([...base, ...extra]);
+}
 
 function dragHint(from, to) {
   const a = from.getBoundingClientRect();
@@ -1688,16 +1715,27 @@ Object.assign(ACTIVITIES, {
     icon: '👯',
     desc: 'Discriminação auditiva: duas palavras (iguais ou do par mínimo) e a criança diz se são iguais ou diferentes.',
     needsFigure: false,
-    build: (ctx, n) => buildTrials('same', ctx.pairs, n),
+    step: 2,
+    levels: ['com as figuras do par na tela', 'só som', 'só som, com pseudopalavras'],
+    build(ctx, n) {
+      if (ctx.level === 3) {
+        const cs = new Set(ctx.pairs.map(p => p.contrast));
+        const pseudo = Bank.pairs.filter(p => p.pseudo && cs.has(p.contrast));
+        if (pseudo.length) return buildTrials('same', pseudo, n);
+      }
+      return buildTrials('same', ctx.pairs, n);
+    },
     art: () => `<span class="art-pair">${critter(CRITTER_A)}${critter(CRITTER_A)}</span>`
       + `<span class="art-pair">${critter(CRITTER_A)}${critter(CRITTER_B)}</span>`,
     async run(trial, g) {
       const { pair, order } = trial;
       const same = order[0] === order[1];
       const bubbles = order.map(() => h('div', { class: 'bubble', html: SPEAKER_SVG }));
+      // Nível 1: as duas figuras do par ficam na tela como apoio.
+      const support = g.level === 1 && pair.figure ? h('div', { class: 'pair-support' }, h('span', null, figureEl(pair, 'a')), h('span', null, figureEl(pair, 'b'))) : null;
       const bSame = h('button', { class: 'answer answer-same', type: 'button', 'aria-label': 'Igual', html: `<span class="critters">${critter(CRITTER_A)}${critter(CRITTER_A)}</span>` });
       const bDiff = h('button', { class: 'answer answer-diff', type: 'button', 'aria-label': 'Diferente', html: `<span class="critters">${critter(CRITTER_A)}${critter(CRITTER_B)}</span>` });
-      g.stage.replaceChildren(h('div', { class: 'bubbles' }, bubbles), h('div', { class: 'answers' }, bSame, bDiff));
+      g.stage.replaceChildren(support || '', h('div', { class: 'bubbles' }, bubbles), h('div', { class: 'answers' }, bSame, bDiff));
       const steps = order.map((side, i) => ({ pair, side, el: bubbles[i] }));
       let replays = -1;
       const listen = async () => { replays++; const r = await g.play(steps); if (!r.cancelled) g.lock(''); };
@@ -1724,28 +1762,34 @@ Object.assign(ACTIVITIES, {
     id: 'which',
     name: 'Qual eu falei?',
     icon: '👉',
-    desc: 'Identificação: ouve uma palavra do par e aponta a figura certa.',
+    desc: 'Identificação: ouve uma palavra do par e aponta a figura certa (2, 3 ou 4 figuras; com ou sem a palavra escrita).',
     needsFigure: true,
+    levels: ['2 figuras + palavra escrita', '2 figuras', '3 figuras', '4 figuras'],
+    stepFor: l => (l >= 3 ? 4 : 3),
     build: (ctx, n) => buildTrials('which', ctx.pairs, n),
     art: () => '<span class="art-cards"><span class="mini-card">🧀</span><span class="mini-card">🧔</span></span>',
     async run(trial, g) {
-      const { pair, target, targetLeft } = trial;
-      const sides = targetLeft ? [target, other(target)] : [other(target), target];
-      const cards = sides.map(s => h('button', { class: 'answer fig-card', type: 'button', 'aria-label': pair[s].text }, figureEl(pair, s)));
-      g.stage.replaceChildren(h('div', { class: 'cards' }, cards));
+      const { pair, target } = trial;
+      const opts = idOptions(trial, g, [2, 2, 3, 4][(g.level || 2) - 1]);
+      const sides = opts.map(([, s]) => s);
+      const cards = opts.map(([p, s]) => h('button', { class: 'answer fig-card' + (g.level === 1 ? ' captioned' : ''), type: 'button', 'aria-label': p[s].text },
+        figureEl(p, s), g.level === 1 && h('span', { class: 'fig-caption' }, p[s].text)));
+      g.stage.replaceChildren(h('div', { class: 'cards' + (cards.length > 2 ? ' many-' + cards.length : '') }, cards));
       let replays = -1;
       const listen = async () => { replays++; const r = await g.play([{ pair, side: target }]); if (!r.cancelled) g.lock(''); };
       g.replayBtn.onclick = listen;
       listen();
       const idx = await waitChoice(cards.map((c, i) => [c, i]));
       g.endInput(cards);
-      const correct = sides[idx] === target;
-      const right = cards[sides.indexOf(target)];
+      const ti = opts.findIndex(([p, s]) => p === pair && s === target);
+      const oi = opts.findIndex(([p, s]) => p === pair && s !== target);
+      const correct = idx === ti;
+      const right = cards[ti];
       if (correct) await celebrate(right);
-      else await showCorrection(g, sides.map((s, i) => ({ pair, side: s, el: cards[i] })), right);
+      else await showCorrection(g, [[oi, other(target)], [ti, target]].sort((x, y) => x[0] - y[0]).map(([i, s]) => ({ pair, side: s, el: cards[i] })), right);
       return {
-        ...baseResult(pair), stim: target, expected: pair[target].text, answer: pair[sides[idx]].text,
-        correct, replays: Math.max(0, replays), targetSide: targetLeft ? 'esquerda' : 'direita',
+        ...baseResult(pair), stim: target, expected: pair[target].text, answer: opts[idx][0][opts[idx][1]].text,
+        correct, replays: Math.max(0, replays), options: opts.length,
       };
     },
   },
@@ -1755,17 +1799,19 @@ Object.assign(ACTIVITIES, {
     id: 'drag',
     name: 'Ajude o bichinho',
     icon: '🐾',
-    desc: 'Identificação com ação: o bichinho pede uma palavra e a criança arrasta a figura até ele.',
+    desc: 'Identificação com ação: o bichinho pede uma palavra e a criança arrasta a figura até ele (2 ou 3 figuras).',
     needsFigure: true,
+    levels: ['2 figuras', '3 figuras'],
+    stepFor: l => (l >= 2 ? 4 : 3),
     build: (ctx, n) => buildTrials('drag', ctx.pairs, n),
     art: () => `<span class="art-drag">${critter(HELPERS[0])}<span class="mini-card tilt">🧀</span></span>`,
     async run(trial, g) {
       const { pair, target, targetLeft } = trial;
-      const sides = targetLeft ? [target, other(target)] : [other(target), target];
+      const opts = idOptions(trial, g, g.level === 2 ? 3 : 2);
       const talkBtn = h('button', { class: 'buddy-bubble', type: 'button', 'aria-label': 'Ouvir de novo', html: SPEAKER_SVG });
       const body = h('div', { class: 'buddy-body', html: critter(g.helper) });
       const buddy = h('div', { class: 'buddy' }, body, talkBtn);
-      const cards = sides.map(s => h('button', { class: 'answer fig-card draggable', type: 'button', 'aria-label': pair[s].text }, figureEl(pair, s)));
+      const cards = opts.map(([p, s]) => h('button', { class: 'answer fig-card draggable', type: 'button', 'aria-label': p[s].text }, figureEl(p, s)));
       const cardRow = h('div', { class: 'cards' }, cards);
       g.stage.replaceChildren(buddy, cardRow);
       let replays = -1;
@@ -1789,8 +1835,10 @@ Object.assign(ACTIVITIES, {
       talkBtn.onclick = null;
       g.endInput(cards);
       buddy.classList.remove('talking');
-      const correct = sides[idx] === target;
-      const right = cards[sides.indexOf(target)];
+      const ti = opts.findIndex(([p, x]) => p === pair && x === target);
+      const oi = opts.findIndex(([p, x]) => p === pair && x !== target);
+      const correct = idx === ti;
+      const right = cards[ti];
       if (correct) {
         flyTo(cards[idx], body);
         await sleep(380);
@@ -1798,10 +1846,10 @@ Object.assign(ACTIVITIES, {
       } else {
         cards[idx].style.transform = '';
         await sleep(300);
-        await showCorrection(g, sides.map((s, i) => ({ pair, side: s, el: cards[i] })), right);
+        await showCorrection(g, [[oi, other(target)], [ti, target]].sort((x, y) => x[0] - y[0]).map(([i, x]) => ({ pair, side: x, el: cards[i] })), right);
       }
       return {
-        ...baseResult(pair), stim: target, expected: pair[target].text, answer: pair[sides[idx]].text,
+        ...baseResult(pair), stim: target, expected: pair[target].text, answer: opts[idx][0][opts[idx][1]].text, options: opts.length,
         correct, replays: Math.max(0, replays), interaction: dropped ? 'arrastou' : 'tocou',
       };
     },
@@ -2105,10 +2153,10 @@ function cycle(list, n) {
 }
 
 /** Modelo + 3 figuras (Qual rima? e Mesmo começo): toca o modelo e depois cada opção. */
-function buildModelTrials(sets, n) {
-  const pos = balancedPositions(n, 3);
+function buildModelTrials(sets, n, k = 3) {
+  const pos = balancedPositions(n, k);
   return cycle(sets, n).map((set, i) => {
-    const options = shuffle(set.others).slice(0, 2);
+    const options = shuffle(set.others).slice(0, k - 1);
     options.splice(pos[i], 0, set.match);
     return { model: set.model, options, answer: pos[i], contrast: set.contrast || null };
   });
@@ -2116,7 +2164,9 @@ function buildModelTrials(sets, n) {
 async function runModelChoice(trial, g, kind) {
   const { model, options, answer } = trial;
   const modelCard = h('button', { class: 'fig-card model-card', type: 'button', 'aria-label': 'Ouvir a palavra' }, wordFig(model));
-  const cards = options.map(w => h('button', { class: 'answer fig-card', type: 'button', 'aria-label': w.text }, wordFig(w)));
+  const cap = !!(g.G && g.G.reads);                    // quem já lê vê a palavra escrita (ex.: "Mesmo começo com letras")
+  const cards = options.map(w => h('button', { class: 'answer fig-card' + (cap ? ' captioned' : ''), type: 'button', 'aria-label': w.text }, wordFig(w), cap && h('span', { class: 'fig-caption' }, w.text)));
+  if (cap) modelCard.append(h('span', { class: 'fig-caption' }, model.text));
   g.stage.replaceChildren(h('div', { class: 'model-row' }, modelCard, h('span', { class: 'model-ear', 'aria-hidden': 'true', html: SPEAKER_SVG })),
     h('div', { class: 'cards three' }, cards));
   const modelStep = () => ({ ...wordItem(model), el: modelCard });
@@ -2152,10 +2202,11 @@ Object.assign(ACTIVITIES, {
     id: 'rhyme',
     name: 'Qual rima?',
     icon: '🎵',
-    desc: 'Consciência fonológica (rima): ouve a palavra-modelo e escolhe, entre três figuras, a que rima.',
+    desc: 'Consciência fonológica (rima): ouve a palavra-modelo e escolhe, entre duas ou três figuras, a que rima.',
     usesPairs: false,
+    levels: ['2 figuras', '3 figuras'],
     art: () => miniCards('🍞', '✋'),
-    build: (ctx, n) => buildModelTrials(rhymeSets(), n),
+    build: (ctx, n) => buildModelTrials(rhymeSets(), n, (ctx.level || 2) + 1),
     run: (trial, g) => runModelChoice(trial, g, 'rhyme'),
   },
 
@@ -2166,11 +2217,12 @@ Object.assign(ACTIVITIES, {
     icon: '🥁',
     desc: 'Consciência silábica: ouve a palavra e bate no tambor uma vez por sílaba (1 a 4 sílabas).',
     usesPairs: false,
+    levels: ['1 a 2 sílabas', '1 a 3 sílabas', '1 a 4 sílabas'],
     art: () => '<span class="art-claps"><span class="mini-card">🥁</span><span class="beat-mini"><i></i><i></i><i></i></span></span>',
     build(ctx, n) {
       const words = clapWords();
       const byCount = [1, 2, 3, 4].map(c => shuffle(words.filter(([, x]) => x === c)));
-      const counts = cycle([1, 2, 3, 4], n);
+      const counts = cycle([1, 2, 3, 4].slice(0, (ctx.level || 3) + 1).filter(c => byCount[c - 1].length), n);
       const used = [0, 0, 0, 0];
       return counts.map(c => {
         const list = byCount[c - 1];
@@ -2247,8 +2299,10 @@ Object.assign(ACTIVITIES, {
     icon: '🔤',
     desc: 'Consciência fonêmica (som inicial /p/ /b/ /t/ /d/): escolhe a figura que começa com o mesmo som do modelo; um distrator sempre começa com o par surdo/sonoro.',
     usesPairs: false,
+    step: 5,
+    levels: ['2 figuras', '3 figuras'],
     art: () => miniCards('⚽', '🧢'),
-    build: (ctx, n) => buildModelTrials(onsetSets(), n),
+    build: (ctx, n) => buildModelTrials(onsetSets(), n, (ctx.level || 2) + 1),
     run: (trial, g) => runModelChoice(trial, g, 'onset'),
   },
 
@@ -2259,12 +2313,14 @@ Object.assign(ACTIVITIES, {
     icon: '🔔',
     desc: 'Aquecimento e atenção auditiva: reconhece sons não verbais (bichos, buzina, sino, chuva, telefone).',
     usesPairs: false,
+    levels: ['2 figuras', '3 figuras', '4 figuras'],
     art: () => miniCards('🔔', '🐶'),
     build(ctx, n) {
       const ids = Object.keys(SOUNDS);
-      const pos = balancedPositions(n, 3);
+      const k = (ctx.level || 2) + 1;
+      const pos = balancedPositions(n, k);
       return cycle(ids, n).map((target, i) => {
-        const options = shuffle(ids.filter(x => x !== target)).slice(0, 2);
+        const options = shuffle(ids.filter(x => x !== target)).slice(0, k - 1);
         options.splice(pos[i], 0, target);
         return { target, options };
       });
@@ -2430,14 +2486,17 @@ Screens.game = {
     if (problem) { renderUnavailable(app, problem); return; }
 
     const adapt = def.adaptive ? await Adaptive.load(child.id, def) : null;
+    const lv = await Levels.get(child.id, def, G);
     if (!alive()) return;
     ctx.adapt = adapt;
+    ctx.level = lv.level;
     const timed = def.timed || 0;                       // segundos (Missão relâmpago)
     const trials = def.build(ctx, timed ? 200 : trialsFor(G));
     const session = {
       id: uid(), childId: child.id, group: G.id, date: new Date().toISOString(), mode: def.id,
       planned: timed ? null : trials.length, complete: false,
       pauseMs: State.settings.pauseMs, appVersion: APP_VERSION, trials: [],
+      lvl: ctx.level, step: stepOf(def, ctx.level),
     };
     if (timed) session.timed = timed;
     if (adapt) session.adaptive = { kind: def.adaptive.kind, start: adapt.level, end: adapt.level, max: adapt.level };
@@ -2458,7 +2517,7 @@ Screens.game = {
     const scoreEl = h('span', { class: 'time-score' }, '0');
     const progress = timed ? h('div', { class: 'time-box', 'aria-label': 'Tempo' }, h('span', { class: 'time-bar' }, timeFill), scoreEl) : dots;
     const ttsBadge = h('span', { class: 'tts-badge', hidden: true, title: 'Palavra sem gravação: tocando a voz sintética do aparelho, que é menos precisa.' }, 'voz sintética');
-    const levelChip = h('span', { class: 'level-chip', hidden: !adapt });
+    const levelChip = h('span', { class: 'level-chip', hidden: !adapt && !lv.max }, !adapt && lv.max ? `Nível ${lv.level}` : '');
     const replayBtn = h('button', { class: 'btn-replay', type: 'button', 'aria-label': 'Ouvir de novo', title: 'Ouvir de novo', html: SPEAKER_SVG });
     const stage = h('div', { class: 'stage stage-' + def.id });
     add(app, [
@@ -2509,6 +2568,8 @@ Screens.game = {
       child,
       ctx,
       adapt,
+      level: ctx.level,
+      sessionId: session.id,
       helper: HELPERS[rand(HELPERS.length)],
       showDragHint: def.id === 'drag',
       tts: false,
@@ -2547,6 +2608,23 @@ Screens.game = {
       },
     };
 
+    if (def.free) {                                      // sem pontuação (ex.: "Conheça as palavras")
+      await def.runFree(g);
+      if (!g.alive()) return;
+      await markFamiliar(child.id, ctx.pairs);
+      go('menu');
+      return;
+    }
+    // Par novo para esta criança: antes do jogo, "Conheça as palavras" com os pares novos.
+    if (def.usesPairs !== false && State.settings.familiarize !== false && ctx.pairs.length) {
+      const fam = await familiarSet(child.id);
+      const fresh = ctx.pairs.filter(p => !fam.has(p.id));
+      if (fresh.length && g.alive()) {
+        await familiarizeScreen(g, fresh.slice(0, 6));
+        await markFamiliar(child.id, fresh);
+        if (!g.alive()) return;
+      }
+    }
     if (def.intro) {                                     // tela de preparo (ex.: "use fone de ouvido")
       await def.intro(g);
       if (!g.alive()) return;
@@ -2565,6 +2643,9 @@ Screens.game = {
       if (!g.alive()) return;
       if (!res) break;                                   // o tempo acabou no meio da tentativa
       res.tts = res.tts || g.tts;
+      res.lvl = adapt ? level : ctx.level;
+      if (res.step == null) res.step = stepOf(def, res.lvl);
+      if (!res.pos && !res.slots && res.pairId) { const pp = Bank.get(res.pairId); if (pp) res.pos = pairPos(pp); }
       if (adapt) {
         res.level = level;
         session.adaptive.max = Math.max(session.adaptive.max, level);
@@ -2585,7 +2666,8 @@ Screens.game = {
     if (timed) session.score = session.trials.filter(t => t.correct).length;
     if (adapt) await adapt.save(session.adaptive.max);
     await DB.put('sessions', session);
-    const out = await (Rewards[G.reward] || Rewards.stickers)(child, session, def);
+    const levelUp = await Levels.afterSession(child.id, def, G, session);
+    const out = await (Rewards[G.reward] || Rewards.stickers)(child, session, def, levelUp);
     if (g.alive()) go(out.screen, out.params);
   },
 };
@@ -2891,7 +2973,12 @@ Object.assign(ACTIVITIES, {
     icon: '🔡',
     desc: 'Ouvir e escrever: ouve a palavra e escolhe a letra que falta (_aca: F ou V). Treino direto da troca na escrita.',
     art: () => detArt('🔡', '_ACA'),
-    build: (ctx, n) => buildTrials('which', ctx.pairs, n),
+    step: 7,
+    levels: ['com figura, letra no começo', 'com figura, em qualquer posição', 'sem figura'],
+    build(ctx, n) {
+      const start = ctx.pairs.filter(p => pairPos(p) === 'inicio');
+      return buildTrials('which', ctx.level === 1 && start.length ? start : ctx.pairs, n);
+    },
     async run(trial, g) {
       const { pair, target, targetLeft } = trial;
       const { pre, suf } = pairDiff(pair);
@@ -2901,7 +2988,8 @@ Object.assign(ACTIVITIES, {
         chars.slice(0, pre).join(''), blank, chars.slice(chars.length - suf).join(''));
       const sides = targetLeft ? [target, other(target)] : [other(target), target];
       const btns = sides.map(s => h('button', { class: 'answer letter-btn', type: 'button' }, diffPart(pair, s).toUpperCase()));
-      g.stage.replaceChildren(h('div', { class: 'signal', html: SPEAKER_SVG }), wordEl, h('div', { class: 'word-row2' }, btns));
+      const fig = (g.level || 1) < 3 && (pair[target].img || pair[target].emoji) ? h('div', { class: 'hidden-fig' }, figureEl(pair, target)) : null;
+      g.stage.replaceChildren(h('div', { class: 'row center' }, h('div', { class: 'signal', html: SPEAKER_SVG }), fig), wordEl, h('div', { class: 'word-row2' }, btns));
       let replays = -1;
       const listen = async () => { replays++; const r = await g.play([{ pair, side: target, el: wordEl }]); if (!r.cancelled) g.lock(''); };
       g.replayBtn.onclick = listen;
@@ -2926,6 +3014,7 @@ Object.assign(ACTIVITIES, {
     name: 'Frase maluca',
     icon: '🤪',
     desc: 'Compreensão e julgamento: ouve uma frase com uma palavra trocada pelo par, acha a palavra errada e escolhe a certa.',
+    step: 6,
     art: () => detArt('🤪', 'leite de FACA?'),
     check(ctx) {
       const cs = new Set(ctx.pairs.map(p => p.contrast));
@@ -2989,6 +3078,7 @@ Object.assign(ACTIVITIES, {
     icon: '🧩',
     desc: 'Ditado com letras móveis: monta a palavra ouvida; há letras-isca do par trocado. Começa com palavras de 2 sílabas e sobe.',
     art: () => detArt('🧩', 'F A C A'),
+    step: 7,
     adaptive: { kind: 'word', start: 1, min: 1, max: 3, up: 3, down: 2, label: l => `Nível ${l}` },
     build: (ctx, n) => buildTrials('which', ctx.pairs, n),
     async run(trial, g) {
@@ -3093,6 +3183,7 @@ Object.assign(ACTIVITIES, {
     icon: '🎧',
     desc: 'Figura-fundo: identifica a palavra do par com ruído de fundo (burburinho, chuva, festa). Adaptativo: o ruído sobe com 3 acertos seguidos e desce com 2 erros.',
     art: () => detArt('🎉', 'S/R'),
+    step: 8,
     adaptive: { kind: 'noise', start: 1, min: 1, max: 8, up: 3, down: 2, warmup: 1, label: l => `Ruído ${l}` },
     build: (ctx, n) => buildTrials('which', ctx.pairs, n),
     run(trial, g) {
@@ -3113,6 +3204,7 @@ Object.assign(ACTIVITIES, {
     desc: 'Fechamento auditivo: identifica a palavra abafada (filtro passa-baixa) ou com cortes curtos de silêncio. Adaptativo como o Ruído na escuta.',
     needsAudio: true,
     art: () => detArt('✂️', 'pi·co·ta·do'),
+    step: 8,
     adaptive: { kind: 'filter', start: 1, min: 1, max: 8, up: 3, down: 2, warmup: 1, label: l => `Filtro ${l}` },
     build(ctx, n) {
       const trials = buildTrials('which', ctx.pairs, n);
@@ -3133,6 +3225,7 @@ Object.assign(ACTIVITIES, {
     icon: '🔐',
     desc: 'Ordenação temporal: ouve uma sequência de sílabas do par (ta–da–ta) e reproduz na ordem. Começa com 3 e vai até 5 (sobe com 2 acertos seguidos).',
     art: () => detArt('🔐', 'TA·DA·TA'),
+    step: 8,
     adaptive: { kind: 'seq', start: 3, min: 3, max: 5, up: 2, down: 2, label: l => `Código de ${l}` },
     build(ctx, n) {
       const cs = Object.keys(byContrast(ctx.pairs)).filter(c => SYLLABLES[c]);
@@ -3198,19 +3291,22 @@ Object.assign(ACTIVITIES, {
     icon: '👀',
     desc: 'Discriminação em sequência: ouve 4 palavras (3 com o mesmo som, ex.: /v/, e 1 com o par /f/) e acha a diferente.',
     art: () => detArt('👀', '1 2 3 4'),
+    step: 8,
+    levels: ['3 palavras', '4 palavras'],
     check(ctx) {
       if (!Object.values(byContrast(ctx.pairs)).some(l => l.length >= 3)) return 'O Caça ao intruso precisa de pelo menos 3 pares do mesmo contraste. Em “Rodada”, escolha mais pares de um contraste.';
       return null;
     },
     build(ctx, n) {
       const groups = Object.values(byContrast(ctx.pairs)).filter(l => l.length >= 3);
-      const pos = balancedPositions(n, 4);
+      const k = ctx.level === 1 ? 3 : 4;
+      const pos = balancedPositions(n, k);
       const majA = balancedPositions(n, 2);
       return cycle(groups, n).map((list, i) => {
         const pick = shuffle(list);
         const major = majA[i] ? 'a' : 'b';
-        const three = pick.slice(0, 3);
-        const odd = pick.length >= 4 ? pick[3] : three[rand(3)];
+        const three = pick.slice(0, k - 1);
+        const odd = pick.length >= k ? pick[k - 1] : three[rand(three.length)];
         const words = three.map(p => ({ pair: p, side: major }));
         words.splice(pos[i], 0, { pair: odd, side: other(major) });
         return { words, odd: pos[i] };
@@ -3219,7 +3315,7 @@ Object.assign(ACTIVITIES, {
     async run(trial, g) {
       const { words, odd } = trial;
       const bubbles = words.map((w, i) => h('button', { class: 'answer num-bubble', type: 'button', 'aria-label': 'palavra ' + (i + 1) },
-        h('span', { class: 'num' }, String(i + 1)), h('span', { class: 'num-word' })));
+        h('span', { class: 'num-big' }, String(i + 1)), h('span', { class: 'num-word' })));
       g.stage.replaceChildren(h('p', { class: 'det-prompt' }, '🕵️ Qual é o intruso?'), h('div', { class: 'num-row' }, bubbles));
       let replays = -1;
       const listen = async () => { replays++; const r = await g.play(words.map((w, i) => ({ ...w, el: bubbles[i] })), 'listen', 650); if (!r.cancelled) g.lock(''); };
@@ -3249,6 +3345,7 @@ Object.assign(ACTIVITIES, {
     icon: '⚡',
     desc: 'Automatização (opcional): 60 segundos identificando palavras do par, para quem já domina. Recorde pessoal, sem ranking.',
     timed: 60,
+    step: 8,
     art: () => detArt('⚡', '60 s'),
     build: (ctx, n) => buildTrials('which', ctx.pairs, n),
     run: (trial, g) => runIdentify(trial, g, { quick: true }),
@@ -3259,6 +3356,7 @@ Object.assign(ACTIVITIES, {
     id: 'dichotic',
     name: 'Fone de ouvido',
     icon: '🎧',
+    step: 8,
     desc: 'Escuta dicótica (opcional): uma palavra do par em cada ouvido ao mesmo tempo; responde o que ouviu à esquerda, à direita ou nos dois. Precisa de fone.',
     needsAudio: true,
     art: () => detArt('🎧', 'E | D'),
@@ -3901,6 +3999,272 @@ Object.assign(ACTIVITIES, {
   },
 });
 
+/* =========================================================================
+ * 3e. ESCADA DE DIFICULDADE, NÍVEIS, FAMILIARIZAÇÃO E PRODUÇÃO (versão 3)
+ * ========================================================================= */
+
+/* Escada de cada contraste (terapia de pares mínimos + hierarquia auditiva). Cada atividade
+ * pertence a um degrau (def.step, ou def.stepFor(nível) quando o degrau muda com o nível). */
+const LADDER = [
+  { step: 1, name: 'Familiarização', short: 'Conhecer' },
+  { step: 2, name: 'Igual ou diferente', short: 'Igual/dif.' },
+  { step: 3, name: 'Identificação com 2 figuras', short: '2 figuras' },
+  { step: 4, name: 'Identificação com 3–4 opções', short: '3–4 opções' },
+  { step: 5, name: 'Fonema isolado e posição na palavra', short: 'Som e posição' },
+  { step: 6, name: 'Frases', short: 'Frases' },
+  { step: 7, name: 'Escrita', short: 'Escrita' },
+  { step: 8, name: 'Ruído, filtro e sequência', short: 'Ruído e seq.' },
+];
+const stepOf = (def, lvl) => (def && def.stepFor ? def.stepFor(lvl || 1) : (def && def.step) || null);
+const accOf = s => (s.trials.length ? s.trials.filter(t => t.correct).length / s.trials.length : 0);
+const LEVEL_UP = 0.8;     // sobe com 80% ou mais em 2 rodadas seguidas
+const LEVEL_DOWN = 0.5;   // volta com menos de 50%
+
+/** Nível de cada atividade por criança (kv "lvl:<criança>:<atividade>" = { level, locked }). */
+const Levels = {
+  key: (childId, aid) => `lvl:${childId}:${aid}`,
+  async get(childId, def, G) {
+    const max = def.levels ? def.levels.length : 0;
+    if (!max) return { level: null, locked: false, max: 0 };
+    const saved = await DB.kv(this.key(childId, def.id), null);
+    const start = (G && G.startLevels && G.startLevels[def.id]) || 1;
+    return { level: clamp(saved ? saved.level : start, 1, max), locked: !!(saved && saved.locked), max };
+  },
+  set(childId, aid, level, locked) { return DB.setKv(this.key(childId, aid), { level, locked: !!locked, date: new Date().toISOString() }); },
+  /** Depois de cada rodada: sobe com ≥80% nesta e na rodada anterior (no mesmo nível); volta com <50%. */
+  async afterSession(childId, def, G, session) {
+    const st = await this.get(childId, def, G);
+    if (!st.max || st.locked || session.lvl == null || !session.trials.length) return null;
+    const mine = (await sessionsOf(childId)).filter(s => s.mode === def.id && s.complete && s.id !== session.id);
+    const prev = mine[mine.length - 1];
+    const acc = accOf(session);
+    let to = session.lvl;
+    if (acc >= LEVEL_UP && prev && prev.lvl === session.lvl && accOf(prev) >= LEVEL_UP && session.lvl < st.max) to = session.lvl + 1;
+    else if (acc < LEVEL_DOWN && session.lvl > 1) to = session.lvl - 1;
+    if (to === st.level) return null;
+    await this.set(childId, def.id, to, false);
+    return { from: session.lvl, to, label: def.levels[to - 1] };
+  },
+};
+
+/* ---------- familiarização ---------- */
+/** Pares que a criança já conhece: os apresentados em "Conheça as palavras" e os que já jogou. */
+async function familiarSet(childId) {
+  const s = new Set(await DB.kv('fam:' + childId, []));
+  for (const x of await sessionsOf(childId)) for (const t of x.trials) if (t.pairId) s.add(t.pairId);
+  return s;
+}
+async function markFamiliar(childId, pairs) {
+  const s = new Set(await DB.kv('fam:' + childId, []));
+  pairs.forEach(p => s.add(p.id));
+  await DB.setKv('fam:' + childId, [...s]);
+}
+/** "Conheça as palavras": cada palavra com a figura e o áudio, sem pontuação. */
+async function familiarizeScreen(g, pairs) {
+  const reads = !!g.G.reads;
+  const cards = [];
+  const card = (p, side) => {
+    const hasFig = p[side].img || p[side].emoji;
+    const b = h('button', { class: 'fam-card', type: 'button', 'aria-label': p[side].text },
+      hasFig && h('span', { class: 'fam-fig' }, figureEl(p, side)),
+      (reads || !hasFig) && h('span', { class: 'fam-word' }, p[side].text));
+    b.onclick = () => g.play([{ pair: p, side, el: b }], '');
+    cards.push({ pair: p, side, el: b });
+    return b;
+  };
+  const rows = pairs.map(p => h('div', { class: 'fam-row' }, card(p, 'a'), h('span', { class: 'fam-vs', 'aria-hidden': 'true' }, '×'), card(p, 'b')));
+  const goBtn = h('button', { class: 'claps-ok fam-go', type: 'button', 'aria-label': 'Vamos jogar' }, '▶️');
+  g.stage.replaceChildren(reads ? h('p', { class: 'det-prompt' }, '👋 Conheça as palavras') : '', h('div', { class: 'fam-grid' }, rows), goBtn);
+  g.lock('');
+  g.replayBtn.onclick = () => g.play(cards, '', 600);
+  g.play(cards, '', 600);                    // bombardeio auditivo: cada palavra uma vez
+  await waitChoice([[goBtn, true]]);
+  g.replayBtn.onclick = null;
+  Sound.stop();
+}
+
+/* ---------- escada por contraste ---------- */
+/** Para cada contraste: % por degrau, degraus dominados e o degrau atual (ou travado pela fono). */
+async function ladderStatus(childId, contrasts) {
+  const ss = (await sessionsOf(childId)).filter(s => s.complete);
+  const locks = await DB.kv('ladder:' + childId, {});
+  const fam = await familiarSet(childId);
+  const out = {};
+  for (const c of contrasts) {
+    const steps = LADDER.map(L => ({ ...L, hit: 0, tot: 0, mastered: false, lastOk: false }));
+    for (const s of ss) {
+      const by = {};
+      for (const t of s.trials) {
+        if (t.contrast !== c) continue;
+        const k = t.step || stepOf(ACTIVITIES[s.mode], t.lvl);
+        if (k) (by[k] = by[k] || []).push(t);
+      }
+      for (const [k, ts] of Object.entries(by)) {
+        const st = steps[k - 1];
+        if (!st) continue;
+        const hit = ts.filter(t => t.correct).length;
+        st.tot += ts.length;
+        st.hit += hit;
+        if (ts.length < 3) continue;           // pouco para decidir
+        const r = hit / ts.length;
+        if (r >= LEVEL_UP && st.lastOk) st.mastered = true;
+        else if (r < LEVEL_DOWN) st.mastered = false;
+        st.lastOk = r >= LEVEL_UP;
+      }
+    }
+    steps[0].mastered = steps[0].mastered || Bank.pairs.some(p => p.contrast === c && fam.has(p.id));
+    const firstOpen = steps.findIndex(st => !st.mastered);
+    const lock = locks[c] && locks[c].step ? locks[c].step : null;
+    out[c] = { steps, current: lock || (firstOpen < 0 ? LADDER.length : firstOpen + 1), locked: !!lock };
+  }
+  return out;
+}
+/** Atividades de um degrau (considerando os níveis de cada uma). */
+function activitiesOfStep(step) {
+  return Object.values(ACTIVITIES).filter(d => d.step === step || (d.stepFor && d.levels && d.levels.some((_, i) => d.stepFor(i + 1) === step)));
+}
+
+/* ---------- gravações da criança (produção) ----------
+ * Ficam só neste aparelho (store "kidAudio"); não vão para o backup; a fono apaga na área da fono. */
+const PROD_MARKS = { certo: { icon: '✅', label: 'certo' }, distorcido: { icon: '〰️', label: 'distorcido' }, errado: { icon: '❌', label: 'errado' } };
+
+Object.assign(ACTIVITIES, {
+  /* CONHEÇA AS PALAVRAS: familiarização, sem pontuação. */
+  familiar: {
+    id: 'familiar',
+    name: 'Conheça as palavras',
+    icon: '👋',
+    step: 1,
+    free: true,
+    desc: 'Familiarização (sem pontuação): mostra cada figura do par com o áudio antes do treino; também aparece sozinha antes de um par novo.',
+    art: () => miniCards('👋', '👂'),
+    build: () => [],
+    runFree: g => familiarizeScreen(g, g.ctx.pairs),
+  },
+
+  /* EU FALO, VOCÊ OUVE: produção com autoescuta; a fono marca certo, distorcido ou errado. */
+  speak: {
+    id: 'speak',
+    name: 'Eu falo, você ouve',
+    icon: '🎤',
+    step: null,
+    desc: 'Produção com autoescuta: ouve o modelo da fono, grava a própria fala e ouve as duas em sequência; a fono marca certo, distorcido ou errado. As gravações da criança ficam só no aparelho.',
+    art: () => miniCards('👂', '🎤'),
+    check: () => (Recorder.supported() ? null : 'Este navegador não permite gravar áudio. No iPad use o Safari e no Android use o Chrome.'),
+    build: (ctx, n) => buildTrials('which', ctx.pairs, n),
+    async run(trial, g) {
+      const { pair, target } = trial;
+      const hasFig = pair[target].img || pair[target].emoji;
+      const fig = h('div', { class: 'fig-card model-card speak-fig' },
+        hasFig && figureEl(pair, target), (g.G.reads || !hasFig) && h('span', { class: 'fam-word' }, pair[target].text));
+      const ear = h('button', { class: 'speak-btn ear-btn', type: 'button', 'aria-label': 'Ouvir o modelo' }, '👂');
+      const mic = h('button', { class: 'answer speak-btn mic', type: 'button', 'aria-label': 'Gravar' }, '🎤');
+      const fill = h('span', { class: 'meter-fill' });
+      const meter = h('span', { class: 'meter speak-meter', 'aria-hidden': 'true' }, fill);
+      const marks = h('div', { class: 'prod-marks', hidden: true });
+      g.stage.replaceChildren(fig, h('div', { class: 'row center speak-row' }, ear, mic), meter, marks);
+      const model = () => g.play([{ pair, side: target, el: fig }]);
+      let replays = -1;
+      const listenModel = async () => { replays++; const r = await model(); if (!r.cancelled) g.lock(''); };
+      g.replayBtn.onclick = listenModel;
+      ear.onclick = () => { if (!g.stage.dataset.lock) listenModel(); };
+      listenModel();
+      let rec = null;
+      let mark = null;
+      let again = false;                      // tocou no microfone de novo: grava direto
+      while (!mark) {
+        marks.hidden = true;
+        mic.textContent = '🎤';
+        if (!again) await g.choose([[mic, true]]);
+        again = false;
+        Sound.stop();
+        let ctl;
+        try {
+          ctl = await Recorder.start({ maxMs: 3500, onLevel: p => { fill.style.transform = `scaleX(${Math.min(1, p * 1.6)})`; } });
+        } catch (e) { micError(e); continue; }
+        mic.textContent = '⏹️';
+        mic.classList.add('recording');
+        mic.onclick = () => ctl.stop();
+        const blob = await ctl.done;
+        mic.onclick = null;
+        mic.classList.remove('recording');
+        fill.style.transform = 'scaleX(0)';
+        if (!g.alive()) return null;
+        const res = await processRecording(blob);
+        if (!res) { mic.classList.add('shake'); setTimeout(() => mic.classList.remove('shake'), 600); continue; }
+        rec = { key: uid(), childId: g.child.id, sessionId: g.sessionId, pairId: pair.id, side: target, word: pair[target].text, mime: res.mime, data: res.data, seconds: res.seconds || null, date: new Date().toISOString(), mark: null };
+        await DB.put('kidAudio', rec);
+        // Ouve as duas em sequência: o modelo da fono e a própria fala.
+        const both = async () => {
+          g.lock('busy');
+          await model();
+          await sleep(500);
+          if (!g.alive()) return;
+          mic.classList.add('speaking');
+          try { const buf = await Sound.decode(rec.data.slice(0)); await Sound.playBuffer(buf); } catch (_) { /* ok */ }
+          mic.classList.remove('speaking');
+          g.lock('');
+        };
+        await both();
+        if (!g.alive()) return null;
+        const btn = (val, icon, label) => h('button', { class: 'prod-mark', type: 'button', 'aria-label': 'Fono: ' + label, title: label }, icon);
+        const bOk = btn('certo', '✅', 'certo');
+        const bDis = btn('distorcido', '〰️', 'distorcido');
+        const bErr = btn('errado', '❌', 'errado');
+        const bAgain = h('button', { class: 'prod-mark again', type: 'button', 'aria-label': 'Ouvir as duas de novo', title: 'ouvir de novo' }, '🔁');
+        marks.replaceChildren(bAgain, h('span', { class: 'prod-sep' }), bOk, bDis, bErr);
+        marks.hidden = false;
+        bAgain.onclick = () => { if (!g.stage.dataset.lock) both(); };
+        mark = await waitChoice([[bOk, 'certo'], [bDis, 'distorcido'], [bErr, 'errado'], [mic, null]]);
+        if (!mark) { await DB.del('kidAudio', rec.key); rec = null; again = true; }   // tocou no microfone: grava de novo
+      }
+      rec.mark = mark;
+      await DB.put('kidAudio', rec);
+      g.endInput([mic, ear]);
+      if (mark === 'certo') await celebrate(fig);
+      else { Sound.chime('tap'); await sleep(500); }
+      return {
+        ...baseResult(pair), stim: target, item: pair[target].text, itemKey: `speak:${pair.id}:${target}`,
+        expected: pair[target].text, answer: mark, production: mark, correct: mark === 'certo', kidAudio: rec.key, replays: Math.max(0, replays),
+      };
+    },
+  },
+});
+
+/** Gravações de uma criança (área da fono): ouvir e apagar. */
+async function kidAudioDialog(kid, onDone) {
+  const list = (await DB.all('kidAudio')).filter(r => r.childId === kid.id).sort((a, b) => b.date.localeCompare(a.date));
+  const body = h('div', { class: 'kid-audio-list' });
+  const draw = () => {
+    body.replaceChildren(...(list.length ? list.map(r => {
+      const play = h('button', { class: 'btn small', type: 'button' }, '▶️');
+      play.onclick = async () => { await AudioEngine.resume(); try { await Sound.playBuffer(await Sound.decode(r.data.slice(0))); } catch (_) { toast('Não consegui tocar esta gravação.'); } };
+      const del = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar' }, '🗑️');
+      del.onclick = async () => { await DB.del('kidAudio', r.key); list.splice(list.indexOf(r), 1); draw(); };
+      return h('div', { class: 'kid-audio-row' }, play,
+        h('span', { class: 'kid-audio-info' }, h('strong', null, r.word), ' ', h('span', { class: 'muted small' }, fmtDateTime(r.date))),
+        h('span', { class: 'badge' }, r.mark ? `${PROD_MARKS[r.mark].icon} ${PROD_MARKS[r.mark].label}` : 'sem marca'), del);
+    }) : [h('p', { class: 'empty' }, 'Nenhuma gravação desta criança.')]));
+  };
+  draw();
+  const delAll = async () => {
+    closeOverlay();
+    if (!(await confirmBox(`Apagar as ${list.length} gravações da voz de “${kid.nick}”? Isso não pode ser desfeito.`, { ok: 'Apagar todas', danger: true }))) return;
+    await DB.write('kidAudio', t => list.forEach(r => t.objectStore('kidAudio').delete(r.key)));
+    toast('Gravações apagadas.');
+    if (onDone) onDone();
+  };
+  openOverlay([
+    h('h2', null, `🎤 Gravações de ${kid.nick}`),
+    h('p', { class: 'muted small' }, 'Feitas em “Eu falo, você ouve”. Ficam só neste aparelho e não entram no backup.'),
+    body,
+    h('div', { class: 'dialog-actions' },
+      list.length > 0 && h('button', { class: 'btn ghost danger-text', type: 'button', onclick: delAll }, '🗑️ Apagar todas'),
+      h('div', { class: 'spacer' }),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => { closeOverlay(); if (onDone) onDone(); } }, 'Fechar')),
+  ], { cls: 'wide' });
+}
+
 /* ---------- missões: pontos, patentes e insígnias ---------- */
 const RANKS = [
   { min: 0, name: 'Detetive Júnior', icon: '🔎' },
@@ -3927,7 +4291,7 @@ async function earnedBadges(childId) {
   return out;
 }
 
-Rewards.missions = async (child, session, def) => {
+Rewards.missions = async (child, session, def, levelUp) => {
   const hits = session.trials.filter(t => t.correct).length;
   const acc = session.trials.length ? hits / session.trials.length : 0;
   const stars = starsFor(acc);
@@ -3947,7 +4311,7 @@ Rewards.missions = async (child, session, def) => {
     if (record.isNew) await DB.setKv(key, hits);
   }
   await DB.setKv('agent:' + child.id, prof);
-  return { screen: 'debrief', params: { mode: def.id, stars, xp, prevXp, newBadges, record, adaptive: session.adaptive || null, hits, total: session.trials.length } };
+  return { screen: 'debrief', params: { mode: def.id, stars, xp, prevXp, newBadges, record, adaptive: session.adaptive || null, hits, total: session.trials.length, levelUp } };
 };
 
 function xpBar(xp) {
@@ -4005,6 +4369,7 @@ Screens.debrief = {
     const badgeLine = p.newBadges && p.newBadges.length
       ? h('div', { class: 'debrief-badges' }, p.newBadges.map(c => h('span', { class: 'badge-det got big', style: `--c:${CONTRASTS[c].color}` }, h('span', { class: 'badge-ico' }, '🏅'), 'Insígnia ', CONTRASTS[c].short)))
       : null;
+    if (p.levelUp) lines.push(h('p', { class: 'debrief-line' + (p.levelUp.to > p.levelUp.from ? ' gold' : '') }, p.levelUp.to > p.levelUp.from ? `⬆️ Nível ${p.levelUp.to} liberado: ${p.levelUp.label}` : `Próxima rodada no nível ${p.levelUp.to}: ${p.levelUp.label}`));
     const rankUp = newRank !== prevRank ? h('div', { class: 'rank-up' }, `Nova patente: ${newRank.icon} ${newRank.name}!`) : null;
     const actions = h('div', { class: 'reward-actions' },
       iconBtn('🗺️', 'Voltar ao mapa', () => go('menu')),
@@ -4249,6 +4614,52 @@ async function setKidGroup(kid, gid) {
   return d;
 }
 
+/** Nível de uma atividade para a criança: escolher e travar. */
+function levelControl(childId, def, G) {
+  const sel = h('select', { class: 'input small-select', 'aria-label': 'Nível de ' + def.name }, def.levels.map((l, i) => h('option', { value: i + 1 }, `Nível ${i + 1}: ${l}`)));
+  const lock = h('input', { type: 'checkbox' });
+  const box = h('div', { class: 'level-ctl' }, sel, h('label', { class: 'check small' }, lock, h('span', null, '🔒 travar')));
+  Levels.get(childId, def, G).then(st => { sel.value = st.level; lock.checked = st.locked; });
+  sel.onchange = () => { lock.checked = true; Levels.set(childId, def.id, +sel.value, true); toast(`${def.name}: nível ${sel.value} travado.`); };
+  lock.onchange = () => Levels.set(childId, def.id, +sel.value, lock.checked);
+  return box;
+}
+/** Escada de cada contraste: % por degrau, dominados (✓), atual (▶) e trava. */
+async function ladderTable(childId, contrasts, gid, redraw) {
+  if (!contrasts.length) return h('p', { class: 'muted' }, 'Escolha pares abaixo para ver a escada de cada contraste.');
+  const st = await ladderStatus(childId, contrasts);
+  const locks = await DB.kv('ladder:' + childId, {});
+  const head = h('tr', null, h('th', null, 'Contraste'), LADDER.map(L => h('th', { class: 'num', title: L.name }, `${L.step}. ${L.short}`)), h('th', null, 'Degrau'));
+  const rows = contrasts.map(c => {
+    const x = st[c];
+    const sel = h('select', { class: 'input small-select' }, h('option', { value: '' }, `Automático (${x.locked ? '—' : x.current})`), LADDER.map(L => h('option', { value: L.step }, `🔒 ${L.step}. ${L.short}`)));
+    sel.value = locks[c] && locks[c].step ? String(locks[c].step) : '';
+    sel.onchange = async () => {
+      const l = await DB.kv('ladder:' + childId, {});
+      if (sel.value) l[c] = { step: +sel.value }; else delete l[c];
+      await DB.setKv('ladder:' + childId, l);
+      redraw();
+    };
+    return h('tr', null, h('td', null, contrastChip(c)),
+      x.steps.map(stp => h('td', { class: 'num ladder-cell' + (stp.mastered ? ' done' : '') + (stp.step === x.current ? ' current' : ''), title: stp.name },
+        stp.tot ? pctCell(stp) : '—', stp.mastered ? ' ✓' : stp.step === x.current ? ' ▶' : '')),
+      h('td', null, sel));
+  });
+  const applyBtn = h('button', { class: 'btn small', type: 'button' }, '🎯 Ligar as atividades do degrau atual');
+  applyBtn.onclick = async () => {
+    const G = groupOf(gid);
+    const steps = new Set(contrasts.map(c => st[c].current));
+    const wanted = new Set([...steps].flatMap(k => activitiesOfStep(k).map(d => d.id)));
+    const custom = (await childActs(childId, gid)) || Object.fromEntries(Object.keys(ACTIVITIES).map(id => [id, packOn(gid, id)]));
+    Object.keys(ACTIVITIES).forEach(id => { if (stepOf(ACTIVITIES[id], 1) && !ACTIVITIES[id].free) custom[id] = wanted.has(id); });
+    if (!Object.values(custom).some(Boolean)) { toast('Nenhuma atividade nesse degrau.'); return; }
+    await DB.setKv(`acts:${childId}:${gid}`, custom);
+    toast(`Ligadas as atividades do degrau ${[...steps].join(' e ')} (${G.name}).`);
+    redraw();
+  };
+  return h('div', null, h('div', { class: 'table-wrap' }, h('table', { class: 'data ladder' }, h('thead', null, head), h('tbody', null, rows))), applyBtn);
+}
+
 /* ---------- aba "Rodada": faixa, atividades e pares de cada criança ---------- */
 FonoTabs.push({ id: 'rodada', label: 'Rodada', icon: '🎯', order: 1, render: renderRoundTab });
 
@@ -4312,10 +4723,12 @@ async function renderRoundTab(el) {
         state[a.id] = cb.checked;
         saveActs();
       };
-      return h('label', { class: 'act-check' + (custom ? '' : ' locked') }, cb,
-        h('span', { class: 'act-ico', 'aria-hidden': 'true' }, a.icon || '🎲'),
-        h('span', { class: 'act-text' }, h('strong', null, a.name), G.offByDefault.includes(a.id) && h('span', { class: 'badge' }, 'opcional'),
-          h('span', { class: 'muted small' }, a.desc || '')));
+      return h('div', { class: 'act-row' },
+        h('label', { class: 'act-check' + (custom ? '' : ' locked') }, cb,
+          h('span', { class: 'act-ico', 'aria-hidden': 'true' }, a.icon || '🎲'),
+          h('span', { class: 'act-text' }, h('strong', null, a.name), G.offByDefault.includes(a.id) && h('span', { class: 'badge' }, 'opcional'),
+            h('span', { class: 'muted small' }, a.desc || ''))),
+        a.levels && levelControl(childId, a, G));
     });
     usePack.onchange = () => { saveActs(); draw(); };
     useCustom.onchange = () => { saveActs(); draw(); };
@@ -4326,13 +4739,14 @@ async function renderRoundTab(el) {
       const chosen = groupPairs.filter(p => ids.has(p.id));
       const fig = chosen.filter(p => p.figure).length;
       const noRec = chosen.filter(p => !Bank.hasAudio(p, 'a') || !Bank.hasAudio(p, 'b')).length;
-      count.replaceChildren(
+      count.replaceChildren();
+      add(count, [
         h('strong', null, `${chosen.length} ${chosen.length === 1 ? 'par selecionado' : 'pares selecionados'}`),
         G.theme === 'kids' && ` · ${fig} com figura (usados em “Qual eu falei?” e “Ajude o bichinho”)`,
-        noRec > 0 && h('span', { class: 'warn-text' }, ` · ${noRec} sem gravação completa (voz sintética)`));
+        noRec > 0 && h('span', { class: 'warn-text' }, ` · ${noRec} sem gravação completa (voz sintética)`)]);
     };
     const groups = CONTRAST_ORDER.map(cid => {
-      const pairs = groupPairs.filter(p => p.contrast === cid);
+      const pairs = groupPairs.filter(p => p.contrast === cid && !p.pseudo);
       if (!pairs.length) return null;
       const all = h('input', { type: 'checkbox' });
       const syncGroup = () => {
@@ -4362,6 +4776,9 @@ async function renderRoundTab(el) {
         h('label', { class: 'radio' }, usePack, h('span', null, h('strong', null, 'Pacote padrão da faixa'), ' (muda em Ajustes)')),
         h('label', { class: 'radio' }, useCustom, h('span', null, h('strong', null, 'Escolher para esta criança')))),
       h('div', { class: 'act-list' }, actRows),
+      h('h3', null, 'Escada de dificuldade'),
+      h('p', { class: 'muted small' }, `Cada degrau reúne atividades. Sobe com ${LEVEL_UP * 100}% ou mais em 2 rodadas seguidas no degrau; volta com menos de ${LEVEL_DOWN * 100}%. Os níveis de cada atividade (acima) seguem a mesma regra.`),
+      await ladderTable(childId, [...new Set(groupPairs.filter(p => ids.has(p.id) && !p.pseudo).map(p => p.contrast))].filter(c => CONTRAST_PHON[c]), gid, draw),
       h('h3', null, 'Pares de palavras'),
       suggestionCard(sug, setIds, G),
       h('div', { class: 'row wrap quick' },
@@ -4381,6 +4798,8 @@ FonoTabs.push({ id: 'criancas', label: 'Crianças', icon: '🧒', order: 3, rend
 async function renderKidsTab(el, show) {
   const kids = await allChildren();
   const sessions = await allSessions();
+  const kidAudioCount = {};
+  (await DB.all('kidAudio')).forEach(r => { kidAudioCount[r.childId] = (kidAudioCount[r.childId] || 0) + 1; });
   const rerender = () => show('criancas');
   add(el, [
     h('div', { class: 'tab-head' },
@@ -4397,6 +4816,7 @@ async function renderKidsTab(el, show) {
           h('div', { class: 'kid-info' },
             h('strong', null, k.nick),
             h('span', { class: 'muted small' }, `${G.icon} ${G.name} · ${ss.length} ${ss.length === 1 ? 'sessão' : 'sessões'}` + (last ? ` · última em ${fmtDate(last)}` : ''))),
+          h('button', { class: 'btn small ghost', type: 'button', title: 'Gravações da voz da criança', onclick: () => kidAudioDialog(k, rerender) }, `🎤 ${kidAudioCount[k.id] || 0}`),
           h('button', { class: 'btn small', type: 'button', onclick: () => kidDialog(k, rerender) }, '✏️ Editar'),
           h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar criança', title: 'Apagar criança', onclick: () => deleteKid(k, rerender) }, '🗑️'));
       }))
@@ -4442,9 +4862,11 @@ function kidDialog(kid, onDone) {
 async function deleteKid(kid, onDone) {
   if (!(await confirmBox(`Apagar “${kid.nick}” e todo o histórico desta criança? Isso não pode ser desfeito.`, { ok: 'Apagar', danger: true }))) return;
   const ids = (await DB.all('sessions')).filter(s => s.childId === kid.id).map(s => s.id);
+  const voice = (await DB.all('kidAudio')).filter(r => r.childId === kid.id).map(r => r.key);
   // Chaves de ajustes desta criança: album:id, round:id[:faixa], acts:id:faixa, adapt:id:atividade, agent:id, record:id:…
   const keys = (await DB.read('kv', s => s.getAllKeys())).filter(k => String(k).split(':')[1] === kid.id);
-  await DB.write(['children', 'sessions', 'kv'], t => {
+  await DB.write(['children', 'sessions', 'kv', 'kidAudio'], t => {
+    voice.forEach(k => t.objectStore('kidAudio').delete(k));
     t.objectStore('children').delete(kid.id);
     ids.forEach(id => t.objectStore('sessions').delete(id));
     keys.forEach(k => t.objectStore('kv').delete(k));
@@ -4740,7 +5162,7 @@ async function buildBackup() {
   const word = w => ({ ...w, img: w.img ? { mime: w.img.mime, data: abToB64(w.img.data) } : null });
   return {
     app: 'escuta-so',
-    format: 2,
+    format: 3,
     appVersion: APP_VERSION,
     exportedAt: new Date().toISOString(),
     pairs: pairs.map(p => ({ ...p, a: word(p.a), b: word(p.b) })),
@@ -4754,7 +5176,7 @@ function parseBackup(text) {
   let data;
   try { data = JSON.parse(text); } catch (_) { data = null; }
   if (!data || data.app !== 'escuta-so' || !Array.isArray(data.pairs)) throw new Error('Este arquivo não é um backup do Escuta Só!.');
-  if (data.format > 2) throw new Error('Este backup foi feito por uma versão mais nova do jogo. Atualize o jogo e tente de novo.');
+  if (data.format > 3) throw new Error('Este backup foi feito por uma versão mais nova do jogo. Atualize o jogo e tente de novo.');
   for (const k of ['audio', 'children', 'sessions', 'kv']) if (!Array.isArray(data[k])) data[k] = [];
   return data;
 }
@@ -4776,9 +5198,14 @@ async function restoreBackup(data) {
     t.objectStore('kv').put({ key: 'seeded', value: true });
     t.objectStore('kv').put({ key: 'lastBackup', value: data.exportedAt || new Date().toISOString() });
   });
+  // Gravações da voz da criança não vão no backup; apaga as de crianças que não existem mais.
+  const keep = new Set(children.map(c => c.id));
+  const orphan = (await DB.all('kidAudio')).filter(r => !keep.has(r.childId)).map(r => r.key);
+  if (orphan.length) await DB.write('kidAudio', t => orphan.forEach(k => t.objectStore('kidAudio').delete(k)));
   Sound.cache.clear();
   State.child = null;
-  await Bank.seed();            // backup antigo: acrescenta o banco dos Detetives sem mexer no resto
+  await Bank.seed();
+  await Lists.load();            // backup antigo: acrescenta o banco dos Detetives sem mexer no resto
   await Bank.load();
   await loadSettings();
 }
@@ -4801,7 +5228,7 @@ async function renderBackupTab(el, show) {
     lastLine,
     h('p', { class: 'muted small' }, `Neste aparelho: ${counts.pairs} pares de palavras, ${counts.audio} gravações, ${counts.kids} crianças e ${counts.sessions} sessões.`),
     h('h3', null, 'Exportar'),
-    h('p', { class: 'muted small' }, 'O arquivo .json leva tudo: palavras, fotos, gravações, crianças, histórico e ajustes.'),
+    h('p', { class: 'muted small' }, 'O arquivo .json leva tudo: palavras, fotos, gravações da fono, listas das atividades, crianças, histórico, níveis e ajustes. As gravações da voz das crianças (“Eu falo, você ouve”) ficam só neste aparelho e não entram no backup.'),
     h('button', { class: 'btn primary', type: 'button', onclick: prepare }, '📦 Criar arquivo de backup'),
     out,
     h('h3', null, 'Importar'),
