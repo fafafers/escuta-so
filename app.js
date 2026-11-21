@@ -13,7 +13,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.0.1';
+const APP_VERSION = '4.1.0';
 
 /* =========================================================================
  * 1. NÚCLEO
@@ -1183,11 +1183,13 @@ async function saveRecording(key, rec) {
   await DB.put('audio', { key, mime: rec.mime, data: rec.data, seconds: rec.seconds || null, updated: new Date().toISOString() });
   Bank.recorded.add(key);
   Sound.forget(key);
+  if (typeof NaturalVoice !== 'undefined') await NaturalVoice.unmark(key);   // gravação da fono por cima da voz gerada
 }
 async function deleteRecording(key) {
   await DB.del('audio', key);
   Bank.recorded.delete(key);
   Sound.forget(key);
+  if (typeof NaturalVoice !== 'undefined') await NaturalVoice.unmark(key);
 }
 function micError(e) {
   const name = e && e.name;
@@ -1266,7 +1268,9 @@ async function renderRecordTab(el) {
   add(el, [
     h('div', { class: 'tab-head' },
       h('h2', null, 'Gravar palavras'),
-      h('button', { class: 'btn primary', type: 'button', onclick: () => editPairDialog(null, draw, recGroup) }, '➕ Novo par')),
+      h('div', { class: 'row wrap' },
+        typeof naturalVoiceButton === 'function' && naturalVoiceButton(() => recGroup, () => draw()),
+        h('button', { class: 'btn primary', type: 'button', onclick: () => editPairDialog(null, draw, recGroup) }, '➕ Novo par'))),
     seg,
     summary,
     !canRecord && h('div', { class: 'banner warn' }, 'Este navegador não permite gravar áudio. No iPad use o Safari e no Android use o Chrome, ambos atualizados.'),
@@ -1370,7 +1374,8 @@ async function renderRecordTab(el) {
     function paint(state = '') {
       const has = Bank.recorded.has(key);
       status.className = 'rec-status ' + (state === 'rec' ? 'recording' : has ? 'ok' : it.synth ? 'ok' : 'none');
-      status.textContent = state === 'rec' ? '● gravando…' : state === 'proc' ? 'recortando…' : has ? '✔ voz gravada' : it.synth ? 'som pronto' : 'sem gravação';
+      const gen = has && typeof NaturalVoice !== 'undefined' && NaturalVoice.isGen(key);
+      status.textContent = state === 'rec' ? '● gravando…' : state === 'proc' ? 'recortando…' : gen ? '🤖 voz natural (gerada)' : has ? '✔ voz gravada' : it.synth ? 'som pronto' : 'sem gravação';
       recBtn.textContent = state === 'rec' ? '⏹️ Parar' : has ? '🔁 Regravar' : '⏺️ Gravar';
       recBtn.classList.toggle('recording', state === 'rec');
       row.classList.toggle('recording', state === 'rec');
@@ -5792,7 +5797,7 @@ async function buildBackup() {
     audio: audio.map(r => ({ ...r, data: abToB64(r.data) })),       // gravações em base64
     children,
     sessions,
-    kv: kv.filter(k => k.key !== 'lastBackup'),
+    kv: kv.filter(k => k.key !== 'lastBackup' && k.key !== 'azure'),     // a chave da Azure fica só no aparelho
   };
 }
 function parseBackup(text) {
@@ -5811,6 +5816,7 @@ async function restoreBackup(data) {
   const audio = data.audio.map(r => ({ ...r, data: b64ToAb(r.data) }));
   const children = data.children.map(normKid);
   const sessions = data.sessions.map(normSession);
+  const azure = await DB.kv('azure', null);      // a chave da Azure não vem no backup: mantém a deste aparelho
   await DB.write(STORES, t => {
     STORES.forEach(s => t.objectStore(s).clear());
     pairs.forEach(p => t.objectStore('pairs').put(p));
@@ -5820,6 +5826,7 @@ async function restoreBackup(data) {
     data.kv.forEach(k => t.objectStore('kv').put(k));
     t.objectStore('kv').put({ key: 'seeded', value: true });
     t.objectStore('kv').put({ key: 'lastBackup', value: data.exportedAt || new Date().toISOString() });
+    if (azure) t.objectStore('kv').put({ key: 'azure', value: azure });
   });
   // Gravações da voz da criança não vão no backup; apaga as de crianças que não existem mais.
   const keep = new Set(children.map(c => c.id));
@@ -6015,6 +6022,7 @@ async function renderSettingsTab(el) {
       h('div', null, h('strong', null, '“Conheça as palavras” antes de um par novo'),
         h('p', { class: 'muted small' }, 'Familiarização: antes do primeiro jogo com um par, o jogo mostra cada figura com o áudio, sem pontuação.')),
       famToggle),
+    typeof naturalVoiceSettings === 'function' && naturalVoiceSettings(),
     groupBlocks,
     h('h3', null, 'Sobre os dados'),
     h('p', null, 'Tudo fica guardado só neste aparelho: nada é enviado para a internet. Depois de aberto uma vez, o jogo funciona sem internet.'),

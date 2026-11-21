@@ -8,6 +8,7 @@
  *   5e. Atividades de processamento auditivo
  *   5f. Escape room e tarefa de casa
  *   5g. Área da fono: classificação dos erros, limiares, ouvidos e questionário
+ *   5h. Voz natural (Azure, plano grátis) para o que a fono não gravou — vale para todas as faixas
  */
 'use strict';
 
@@ -2471,7 +2472,209 @@ function csvExtraFor(trials, mode) {
 }
 const CSV_EXTRA_HEAD = ['canal', 'sonorizacao', 'dessonorizacao', 'outros_erros', 'ouvido_esquerdo', 'ouvido_direito', 'limiar_da_sessao', 'resposta_questionario'];
 
+/* =========================================================================
+ * 5h. VOZ NATURAL (Microsoft Azure, plano grátis F0) — vale para todas as faixas
+ * Gera, uma vez só, o áudio do que a fono ainda não gravou e guarda como gravação: depois funciona
+ * sem internet e entra no backup. A chave fica só neste aparelho (kv "azure", fora do backup).
+ * Trava própria: no máximo AZURE_MONTH_CAP caracteres por mês, abaixo dos 500 mil grátis do F0.
+ * ========================================================================= */
+const AZURE_FREE = 500000;
+const AZURE_MONTH_CAP = 450000;
+const AZURE_VOICES = ['pt-BR-FranciscaNeural', 'pt-BR-ThalitaNeural', 'pt-BR-AntonioNeural', 'pt-BR-BrendaNeural', 'pt-BR-DonatoNeural', 'pt-BR-ElzaNeural',
+  'pt-BR-FabioNeural', 'pt-BR-GiovannaNeural', 'pt-BR-HumbertoNeural', 'pt-BR-JulioNeural', 'pt-BR-LeilaNeural', 'pt-BR-LeticiaNeural',
+  'pt-BR-ManuelaNeural', 'pt-BR-NicolauNeural', 'pt-BR-ValerioNeural', 'pt-BR-YaraNeural'];
+const NaturalVoice = {
+  cfg: null,
+  gen: {},                                   // chave da gravação → voz que gerou
+  async load() {
+    this.cfg = { key: '', region: 'brazilsouth', voice: 'pt-BR-FranciscaNeural', rate: -5, ...(await DB.kv('azure', {})) };
+    this.gen = await DB.kv('ttsGenerated', {});
+  },
+  ready() { return !!(this.cfg && this.cfg.key && this.cfg.region); },
+  isGen(key) { return !!this.gen[key]; },
+  async mark(key, voice) { this.gen[key] = voice; await DB.setKv('ttsGenerated', this.gen); },
+  async unmark(key) { if (this.gen[key]) { delete this.gen[key]; await DB.setKv('ttsGenerated', this.gen); } },
+  monthKey: () => 'azureChars:' + dayKey().slice(0, 7),
+  used() { return DB.kv(this.monthKey(), 0); },
+  base() { return `https://${encodeURIComponent(this.cfg.region.trim())}.tts.speech.microsoft.com/cognitiveservices`; },
+  async voices() {
+    const r = await fetch(this.base() + '/voices/list', { headers: { 'Ocp-Apim-Subscription-Key': this.cfg.key.trim() } });
+    if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? 'auth' : 'http ' + r.status);
+    const list = await r.json();
+    // Só as vozes neurais comuns (as HD não entram no plano grátis).
+    return list.filter(v => v.Locale === 'pt-BR' && v.VoiceType === 'Neural' && !/HD|Dragon/i.test(v.ShortName)).map(v => ({ id: v.ShortName, name: `${v.LocalName || v.DisplayName} (${v.Gender === 'Female' ? 'feminina' : 'masculina'})` }));
+  },
+  /** Áudio de um texto (WAV). Lança 'cap' se passar da trava do mês, 'auth', 'limit' ou 'net'. */
+  async synth(text, voice = this.cfg.voice) {
+    const used = await this.used();
+    if (used + text.length > AZURE_MONTH_CAP) throw new Error('cap');
+    const ssml = `<speak version="1.0" xml:lang="pt-BR"><voice name="${esc(voice)}"><prosody rate="${+this.cfg.rate || 0}%">${esc(text)}</prosody></voice></speak>`;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let r;
+      try {
+        r = await fetch(this.base() + '/v1', {
+          method: 'POST',
+          headers: { 'Ocp-Apim-Subscription-Key': this.cfg.key.trim(), 'Content-Type': 'application/ssml+xml', 'X-Microsoft-OutputFormat': 'riff-24khz-16bit-mono-pcm' },
+          body: ssml,
+        });
+      } catch (_) { throw new Error('net'); }
+      if (r.ok) {
+        await DB.setKv(this.monthKey(), (await this.used()) + text.length);
+        return new Blob([await r.arrayBuffer()], { type: 'audio/wav' });
+      }
+      if (r.status === 401 || r.status === 403) throw new Error('auth');
+      if (r.status === 429) { await sleep((+r.headers.get('Retry-After') || 10) * 1000); continue; }   // F0: 20 pedidos por minuto
+      throw new Error('http ' + r.status);
+    }
+    throw new Error('limit');
+  },
+};
+InitHooks.push(() => NaturalVoice.load());
+const NV_ERR = {
+  cap: 'Chegou na trava do mês (450 mil caracteres, abaixo do limite grátis). Volta a funcionar no mês que vem.',
+  auth: 'A Azure recusou a chave. Confira a chave e a região (a mesma escolhida ao criar o recurso).',
+  net: 'Sem internet (ou a região está errada). A voz natural precisa de internet só na hora de gerar.',
+  limit: 'A Azure pediu para esperar. Tente de novo em alguns minutos.',
+};
+const nvErr = e => NV_ERR[e.message] || 'A Azure respondeu com erro (' + e.message + ').';
 
-
-
-
+/* O que dá para gerar: tudo o que é palavra, frase ou texto (os sons sozinhos e os sons de bichos ficam de fora). */
+function naturalItems(gid) {
+  const out = [];
+  for (const sec of recordSections(gid)) {
+    if (sec.id === 'phon' || sec.id === 'sounds') continue;
+    const items = sec.pairs ? sec.pairs.flatMap(p => ['a', 'b'].map(s => ({ key: p.id + ':' + s, text: p[s].text }))) : sec.items.map(it => ({ key: it.key, text: it.sentence ? sentenceText(it.sentence) : it.tts || it.read || it.text }));
+    const miss = items.filter(it => it.key && it.text && !Bank.recorded.has(it.key));
+    if (miss.length) out.push({ id: sec.id, title: sec.title, items: miss, chars: miss.reduce((n, it) => n + it.text.length, 0) });
+  }
+  return out;
+}
+/** Botão da aba "Gravar palavras": gera com a voz natural o que ainda não tem gravação. */
+function naturalVoiceButton(getGroup, redraw) {
+  return h('button', { class: 'btn', type: 'button', onclick: () => naturalVoiceDialog(getGroup(), redraw) }, '🤖 Voz natural');
+}
+async function naturalVoiceDialog(gid, redraw) {
+  if (!NaturalVoice.ready()) {
+    openOverlay([h('h2', null, '🤖 Voz natural'), h('p', null, 'Primeiro coloque a chave da Azure em Área da fono → Ajustes → Voz natural (Azure). O passo a passo está no README.'),
+      h('div', { class: 'dialog-actions' }, h('button', { class: 'btn primary', type: 'button', onclick: closeOverlay }, 'Entendi'))]);
+    return;
+  }
+  const secs = naturalItems(gid);
+  const used = await NaturalVoice.used();
+  if (!secs.length) { toast('Tudo desta faixa já tem gravação. 🎉'); return; }
+  const checks = secs.map(s => {
+    const cb = h('input', { type: 'checkbox', checked: s.id !== 'pairs' });
+    return { s, cb, el: h('label', { class: 'check' }, cb, h('span', null, `${s.title} `, h('span', { class: 'muted small' }, `(${s.items.length} · ${s.chars.toLocaleString('pt-BR')} caracteres)`))) };
+  });
+  const info = h('p', { class: 'small' });
+  const paint = () => {
+    const chars = checks.filter(c => c.cb.checked).reduce((n, c) => n + c.s.chars, 0);
+    info.textContent = `Vai usar ${chars.toLocaleString('pt-BR')} caracteres. Este mês já foram ${used.toLocaleString('pt-BR')} de ${AZURE_FREE.toLocaleString('pt-BR')} grátis (o jogo para sozinho em ${AZURE_MONTH_CAP.toLocaleString('pt-BR')}).`;
+  };
+  checks.forEach(c => { c.cb.onchange = paint; });
+  paint();
+  const bar = h('span', { class: 'progress-fill', style: 'width:0%' });
+  const status = h('p', { class: 'muted small' });
+  const goBtn = h('button', { class: 'btn primary', type: 'button' }, 'Gerar');
+  const stopBtn = h('button', { class: 'btn ghost', type: 'button' }, 'Fechar');
+  let running = false;
+  let stop = false;
+  stopBtn.onclick = () => { if (running) { stop = true; stopBtn.textContent = 'Parando…'; } else { closeOverlay(); redraw(); } };
+  goBtn.onclick = async () => {
+    const todo = checks.filter(c => c.cb.checked).flatMap(c => c.s.items);
+    if (!todo.length) return;
+    running = true;
+    goBtn.disabled = true;
+    checks.forEach(c => { c.cb.disabled = true; });
+    stopBtn.textContent = 'Parar';
+    let done = 0;
+    let fail = null;
+    for (const it of todo) {
+      if (stop) break;
+      status.textContent = `Gerando ${done + 1} de ${todo.length}: “${it.text.slice(0, 50)}${it.text.length > 50 ? '…' : ''}”`;
+      try {
+        const blob = await NaturalVoice.synth(it.text);
+        const rec = await processRecording(blob, false);
+        if (rec) { await saveRecording(it.key, rec); await NaturalVoice.mark(it.key, NaturalVoice.cfg.voice); }
+      } catch (e) { fail = e; break; }
+      done++;
+      bar.style.width = `${(100 * done) / todo.length}%`;
+      await sleep(3100);                       // o plano grátis aceita 20 pedidos por minuto
+    }
+    running = false;
+    status.textContent = fail ? `${done} gerados. ${nvErr(fail)}` : stop ? `Parado: ${done} de ${todo.length} gerados.` : `Pronto: ${done} áudios gerados com a voz natural.`;
+    stopBtn.textContent = 'Fechar';
+  };
+  openOverlay([
+    h('h2', null, '🤖 Gerar com voz natural'),
+    h('p', null, 'Só o que ainda não tem a sua gravação. O áudio fica guardado no aparelho (funciona sem internet e entra no backup). Para trocar por uma gravação sua, é só regravar por cima.'),
+    h('div', { class: 'checks nv-checks' }, checks.map(c => c.el)),
+    info,
+    h('p', { class: 'muted small' }, 'Leva uns 3 segundos por item (limite do plano grátis). Deixe esta tela aberta.'),
+    h('div', { class: 'progress-line' }, bar),
+    status,
+    h('div', { class: 'dialog-actions' }, stopBtn, goBtn),
+  ], { dismissible: false, cls: 'wide' });
+}
+/** Bloco de Ajustes: chave, região, voz, velocidade e teste. */
+function naturalVoiceSettings() {
+  const c = NaturalVoice.cfg || {};
+  const keyIn = h('input', { class: 'input', type: 'password', autocomplete: 'off', placeholder: 'chave (KEY 1) do recurso de Fala', value: c.key || '' });
+  const regIn = h('input', { class: 'input', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'brazilsouth', value: c.region || 'brazilsouth' });
+  const voiceSel = h('select', { class: 'input' }, AZURE_VOICES.map(v => h('option', { value: v }, v.replace('pt-BR-', '').replace('Neural', ''))));
+  voiceSel.value = c.voice || AZURE_VOICES[0];
+  const rateIn = h('input', { type: 'range', min: -30, max: 10, step: 5, value: c.rate != null ? c.rate : -5, 'aria-label': 'Velocidade da voz natural' });
+  const rateOut = h('output', { class: 'range-out' }, (rateIn.value > 0 ? '+' : '') + rateIn.value + '%');
+  const msg = h('p', { class: 'small' });
+  const usedEl = h('p', { class: 'muted small' });
+  NaturalVoice.used().then(u => { usedEl.textContent = `Usado este mês: ${u.toLocaleString('pt-BR')} de ${AZURE_FREE.toLocaleString('pt-BR')} caracteres grátis. O jogo para sozinho em ${AZURE_MONTH_CAP.toLocaleString('pt-BR')}.`; });
+  const save = async () => {
+    NaturalVoice.cfg = { key: keyIn.value.trim(), region: regIn.value.trim().toLowerCase().replace(/\s+/g, ''), voice: voiceSel.value, rate: +rateIn.value };
+    await DB.setKv('azure', NaturalVoice.cfg);
+  };
+  keyIn.onchange = regIn.onchange = voiceSel.onchange = save;
+  rateIn.oninput = () => { rateOut.textContent = (rateIn.value > 0 ? '+' : '') + rateIn.value + '%'; };
+  rateIn.onchange = save;
+  const loadBtn = h('button', { class: 'btn small', type: 'button' }, '🔄 Buscar vozes');
+  loadBtn.onclick = async () => {
+    await save();
+    msg.className = 'small';
+    msg.textContent = 'Buscando…';
+    try {
+      const vs = await NaturalVoice.voices();
+      const cur = voiceSel.value;
+      voiceSel.replaceChildren(...vs.map(v => h('option', { value: v.id }, v.name)));
+      voiceSel.value = vs.some(v => v.id === cur) ? cur : (vs[0] || {}).id;
+      await save();
+      msg.className = 'small ok-text';
+      msg.textContent = `✔ Chave aceita: ${vs.length} vozes em português do Brasil.`;
+    } catch (e) { msg.className = 'small warn-text'; msg.textContent = nvErr(e); }
+  };
+  const testBtn = h('button', { class: 'btn small', type: 'button' }, '🔊 Testar a voz natural');
+  testBtn.onclick = async () => {
+    await save();
+    if (!NaturalVoice.ready()) { msg.className = 'small warn-text'; msg.textContent = 'Coloque a chave e a região.'; return; }
+    msg.className = 'small';
+    msg.textContent = 'Gerando…';
+    try {
+      const blob = await NaturalVoice.synth('A Defesa Civil emitiu um alerta de chuva forte para a tarde desta quinta-feira. Faca, vaca. Tia, dia. Tadefo.');
+      AudioEngine.unlock();
+      const buf = await Sound.decode(await blob.arrayBuffer());
+      Sound.stop();
+      Sound.playBuffer(buf);
+      msg.className = 'small ok-text';
+      msg.textContent = '✔ Funcionando. Se gostar, gere os áudios em Gravar palavras → 🤖 Voz natural.';
+    } catch (e) { msg.className = 'small warn-text'; msg.textContent = nvErr(e); }
+  };
+  return h('div', { class: 'setting nv-setting' },
+    h('div', null, h('strong', null, '🤖 Voz natural (Microsoft Azure, grátis)'),
+      h('p', { class: 'muted small' }, 'Gera uma vez o áudio do que você ainda não gravou, com voz neural em português do Brasil, e guarda no aparelho. Use um recurso de Fala no plano Free F0: ele não cobra nada; quando acaba a cota do mês, só para de gerar. A chave fica só neste aparelho e não vai para o backup. Passo a passo no README.'),
+      usedEl),
+    h('div', { class: 'voice-ctl' },
+      h('label', { class: 'field' }, h('span', null, 'Chave'), keyIn),
+      h('label', { class: 'field' }, h('span', null, 'Região'), regIn),
+      h('label', { class: 'field' }, h('span', null, 'Voz'), voiceSel),
+      h('label', { class: 'field' }, h('span', null, 'Velocidade'), h('div', { class: 'range-row' }, rateIn, rateOut)),
+      h('div', { class: 'row wrap' }, loadBtn, testBtn),
+      msg));
+}

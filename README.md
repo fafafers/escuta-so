@@ -49,6 +49,24 @@ Na tela inicial (ou em qualquer menu), **segure o botãozinho ⚙️ no canto po
 - **Ruído, filtro, "ouvir devagar" (0,75×) e som em um ouvido só são aplicados pelo jogo sobre a sua gravação.** Não precisa gravar versões extras.
 - **✏️ Editar** muda a palavra, o emoji ou a foto e escolhe as faixas do par. **➕ Novo par** cria pares novos.
 
+### 🤖 Voz natural (Microsoft Azure, grátis)
+
+Para o que você **não** gravou, o jogo pode gerar o áudio uma vez só com uma voz neural em português do Brasil (Francisca, Thalita, Antonio…). O áudio fica guardado no tablet como se fosse uma gravação: **funciona sem internet** e entra no backup. Dá para regravar por cima com a sua voz a qualquer hora.
+
+**Criar a conta (uma vez só, uns 10 minutos):**
+
+1. Crie uma conta grátis em **azure.microsoft.com/free**. Pode pedir um cartão **só para confirmar a identidade**. Não clique em "Atualizar" para o plano pago.
+2. Entre em **portal.azure.com** → **Criar um recurso** → procure **"Fala"** (Speech) → **Criar**.
+3. Preencha: grupo de recursos novo (qualquer nome), região **Brazil South**, um nome qualquer e **Tipo de preço: Free F0**. ⚠️ Esse é o importante: o F0 **não cobra nada**; quando acaba a cota do mês (500 mil caracteres), ele só para de gerar até o mês seguinte.
+4. Depois de criado, abra o recurso → **Chaves e Ponto de Extremidade** → copie a **CHAVE 1** e a **Região** (`brazilsouth`).
+
+**No jogo:**
+
+5. Área da fono → **Ajustes → 🤖 Voz natural**: cole a chave, confira a região, toque em **🔄 Buscar vozes** e em **🔊 Testar a voz natural**. Escolha a voz de que mais gostar.
+6. **Gravar palavras → 🤖 Voz natural**: marque o que gerar (os pares vêm desmarcados, porque a sua gravação é melhor para o surdo × sonoro) e toque em **Gerar**. Leva uns 3 segundos por item; deixe a tela aberta. Os itens gerados aparecem como "🤖 voz natural (gerada)".
+
+Todo o conteúdo do jogo dá uns 15 mil caracteres, bem longe do limite. Mesmo assim, o jogo tem uma **trava própria em 450 mil por mês**. A chave fica **só no tablet** e não vai para o backup. Só os textos do jogo vão para a Microsoft, nenhum dado das crianças. Pseudopalavras inventadas na hora e frases com a palavra trocada continuam na voz do aparelho.
+
 ## 4. Listas das atividades
 
 Área da fono → **Listas**: rimas, Mesmo começo, Bate palminhas, Frase maluca, Onde mora o som e Trem do som. Dá para editar, acrescentar, apagar ou voltar à lista inicial.

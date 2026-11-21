@@ -1931,3 +1931,5 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
 /* gravação de textos longos: o texto inteiro aparece para ler; voz sintética em Ajustes */
 .rec-read { grid-column: 1 / -1; margin: 4px 0 2px; padding: 10px 14px; border-radius: 12px; background: #fffdf6; border: 1px solid var(--line); font-size: 18px; line-height: 1.55; white-space: pre-wrap; }
 .voice-ctl { display: flex; flex-direction: column; gap: 8px; min-width: min(100%, 320px); }
+.nv-checks { flex-direction: column; align-items: flex-start; margin: 8px 0; }
+.nv-setting .field { margin: 0; }
