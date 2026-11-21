@@ -474,7 +474,7 @@ async function init() {
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(e => console.warn('service worker', e));
   }
-  go('start');
+  go(State.boot || 'start');        // celular com tarefa de casa (Sintonia) abre direto nela
 }
 document.addEventListener('DOMContentLoaded', init);
 
@@ -2544,6 +2544,7 @@ Screens.game = {
       pauseMs: State.settings.pauseMs, appVersion: APP_VERSION, trials: [],
       lvl: ctx.level, step: stepOf(def, ctx.level),
     };
+    if (State.homework && State.homework.k && State.homework.k[0] === child.id) session.hw = State.homework.id;   // tarefa de casa
     if (timed) session.timed = timed;
     if (adapt) session.adaptive = { kind: def.adaptive.kind, start: adapt.level, end: adapt.level, max: adapt.level };
     let left = false;

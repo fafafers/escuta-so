@@ -331,6 +331,8 @@ MenuStyles.teen = async (app, { child, acts, top, alive }) => {
       })));
   const survey = surveyDue ? h('button', { class: 'teen-survey-cta', type: 'button', onclick: () => go('teenSurvey') },
     h('span', { class: 'tsc-ico' }, '📋'), h('span', null, h('strong', null, 'Como anda a sua escuta?'), h('span', { class: 'muted' }, ' 6 perguntas rápidas, uma vez por mês.'))) : null;
+  const hw = State.homework && State.homework.k[0] === child.id ? h('button', { class: 'teen-survey-cta hw-cta', type: 'button', onclick: () => go('homework') },
+    h('span', { class: 'tsc-ico' }, '📚'), h('span', null, h('strong', null, 'Tarefa de casa'), h('span', { class: 'muted' }, ' · ver o que falta e enviar para a fono'))) : null;
   const tiles = acts.length
     ? h('div', { class: 'teen-grid' }, acts.map(m => {
       const r = prof.rec[m.id];
@@ -342,7 +344,7 @@ MenuStyles.teen = async (app, { child, acts, top, alive }) => {
         h('span', { class: 'tt-rec' + (r ? ' has' : '') }, recTxt));
     }))
     : h('p', { class: 'empty' }, 'Nenhuma atividade ativa. A fono liga as atividades na área da fono, em Rodada.');
-  app.append(h('div', { class: 'teen-menu' }, hero, survey, tiles));
+  app.append(h('div', { class: 'teen-menu' }, hero, hw, survey, tiles));
 };
 
 /* ---------- fim da rodada ---------- */
@@ -368,7 +370,7 @@ Screens.teenDebrief = {
       lines,
       ach,
       h('div', { class: 'td-actions' },
-        h('button', { class: 'btn', type: 'button', onclick: () => go('menu') }, '← Menu'),
+        h('button', { class: 'btn', type: 'button', onclick: () => go(State.homework && (State.child || GUEST).id === State.homework.k[0] ? 'homework' : 'menu') }, '← ' + (State.homework && (State.child || GUEST).id === State.homework.k[0] ? 'Tarefa' : 'Menu')),
         h('button', { class: 'btn primary', type: 'button', onclick: () => go('game', { mode: p.mode }) }, '↻ Jogar de novo'))));
     Sound.chime(p.acc >= 0.8 ? 'win' : 'star');
     await sleep(350);
@@ -1749,7 +1751,507 @@ Object.assign(ACTIVITIES, {
   },
 });
 
-/* @@PART5@@ */
+/* =========================================================================
+ * 5f. ESCAPE ROOM E TAREFA DE CASA
+ * ========================================================================= */
+
+/* ---------- Escape room: 4 a 5 desafios encadeados; cada acerto revela um dígito do cadeado ---------- */
+const ESCAPE_POOL = ['pseudo', 'family', 'anagram', 'tones', 'wmem', 'fast'];
+const ESCAPE_SUBLEVEL = { pseudo: 2, family: 1, anagram: 1, fast: 1, tones: 3 };
+const ESCAPE_ADAPT = { tones: 4, wmem: 4, fast: 3 };
+/** Contexto de um desafio (cada atividade monta o seu, como se fosse jogada sozinha). */
+function escapeSub(ctx, id) {
+  const def = ACTIVITIES[id];
+  if (!def) return null;
+  const sub = { ...ctx, def, level: def.levels ? Math.min(def.levels.length, ESCAPE_SUBLEVEL[id] || 1) : null };
+  if (def.usesPairs === false) sub.pairs = [];
+  if (def.items) sub.items = def.items(sub);
+  if (def.check && def.check(sub)) return null;
+  const trial = def.build(sub, 1)[0];
+  return trial ? { id, def, ctx: sub, trial } : null;
+}
+ACTIVITIES.escape = {
+  id: 'escape',
+  name: 'Escape room do som',
+  icon: '🔐',
+  channel: 'ouvir',
+  teen: 'Resolva os desafios e abra o cadeado',
+  desc: 'Missão encadeada: 4 ou 5 desafios que misturam as atividades (pseudopalavra, família, anagrama, tons, memória, fala acelerada). Cada acerto revela um dígito do cadeado; dá para pagar uma dica com XP. Cronômetro opcional.',
+  art: () => teenArt('🔐', '4 · ? · 7 · ?'),
+  step: 8,
+  levels: ['4 desafios', '5 desafios'],
+  check: ctx => (ESCAPE_POOL.filter(id => escapeSub(ctx, id)).length >= 3 ? null : 'O Escape room precisa de pelo menos 3 atividades com conteúdo (pares na Rodada e listas preenchidas).'),
+  build(ctx, n) {
+    const ok = shuffle(ESCAPE_POOL.filter(id => escapeSub(ctx, id)));
+    const need = (ctx.level || 2) === 1 ? 4 : 5;
+    const order = [];
+    while (order.length < need + 2) order.push(ok[order.length % ok.length]);
+    return order.map(id => ({ sub: id, need }));
+  },
+  async intro(g) {
+    const need = (g.level || 2) === 1 ? 4 : 5;
+    g.escape = { code: Array.from({ length: need }, () => rand(10)), shown: 0, hints: 0, onHint: null };
+    const go_ = h('button', { class: 'btn primary big', type: 'button' }, 'Entrar na sala ▶');
+    g.stage.replaceChildren(h('div', { class: 'escape-intro' },
+      h('div', { class: 'escape-lock-big', 'aria-hidden': 'true' }, '🔐'),
+      h('h2', null, 'Sala do som trancada'),
+      h('p', null, `O cadeado tem ${need} dígitos. Cada desafio que você acertar revela um dígito. Errou? Vem outro desafio (até ${need + 2}).`),
+      h('p', { class: 'muted' }, `💡 Travou? Peça uma dica: custa ${ESCAPE_HINT_XP} XP.`),
+      go_));
+    await waitChoice([[go_, true]]);
+    const digits = g.escape.code.map(() => h('span', { class: 'esc-digit' }, '?'));
+    const title = h('span', { class: 'esc-title' });
+    const hintBtn = h('button', { class: 'btn small esc-hint', type: 'button' }, `💡 Dica (−${ESCAPE_HINT_XP} XP)`);
+    hintBtn.onclick = () => {
+      if (!g.escape.onHint || hintBtn.disabled) return;
+      g.escape.onHint();
+      g.escape.hints++;
+      hintBtn.disabled = true;
+      toast(`Dica usada: −${ESCAPE_HINT_XP} XP no fim da missão.`);
+    };
+    const bar = h('div', { class: 'escape-bar' }, h('span', { class: 'esc-lock' }, '🔒'), h('div', { class: 'esc-digits' }, digits), title, h('div', { class: 'spacer' }), hintBtn);
+    g.stage.parentNode.insertBefore(bar, g.stage);
+    onLeave(() => bar.remove());
+    Object.assign(g.escape, { bar, digits, title, hintBtn, n: 0 });
+  },
+  async run(trial, g) {
+    const E = g.escape;
+    if (E.shown >= E.code.length) return null;              // cadeado completo: fim da missão
+    const s = escapeSub(g.ctx, trial.sub);
+    if (!s) return null;
+    E.n++;
+    E.title.textContent = `Desafio ${E.n} · ${s.def.icon} ${s.def.name}`;
+    E.onHint = null;
+    E.hintBtn.disabled = false;
+    const lvl = ESCAPE_ADAPT[s.id] || (s.def.adaptive ? s.def.adaptive.start : null);
+    const adapt = s.def.adaptive ? { level: lvl, label: l => s.def.adaptive.label(l), update() {}, save: async () => {} } : null;
+    const sg = { ...g, ctx: s.ctx, level: s.ctx.level, adapt, escape: E };
+    const res = await s.def.run(s.trial, sg);
+    E.onHint = null;
+    E.hintBtn.disabled = true;
+    if (!res) return null;
+    const ok = res.correct;
+    if (ok) {
+      const el = E.digits[E.shown];
+      el.textContent = String(E.code[E.shown]);
+      el.classList.add('open');
+      E.shown++;
+      Sound.chime('open');
+      burst(el, ['✦', '✧', '★', '✦']);
+    }
+    g.stage.replaceChildren(h('div', { class: 'escape-step' },
+      h('p', { class: 'td-line' + (ok ? ' good' : '') }, ok ? `Dígito ${E.shown} revelado!` : 'Esse dígito continua escondido. Vamos para outro desafio.'),
+      h('p', { class: 'muted' }, `${E.shown} de ${E.code.length} dígitos`)));
+    await sleep(1300);
+    return { ...res, sub: s.id, itemKey: 'escape:' + s.id, item: s.def.name, digit: ok };
+  },
+  async afterRound(g, session) {
+    const E = g.escape;
+    session.hints = E.hints;
+    session.escaped = E.shown >= E.code.length;
+    if (!session.escaped) {
+      const goOn = h('button', { class: 'btn primary', type: 'button' }, 'Ver resultado');
+      g.stage.replaceChildren(h('div', { class: 'escape-intro' }, h('div', { class: 'escape-lock-big' }, '🔒'), h('h2', null, 'Quase!'), h('p', null, `Faltou ${E.code.length - E.shown} ${E.code.length - E.shown === 1 ? 'dígito' : 'dígitos'}. Na próxima você abre.`), goOn));
+      await waitChoice([[goOn, true]]);
+      return;
+    }
+    // Abrir o cadeado digitando o código revelado.
+    const typed = [];
+    const show = h('div', { class: 'esc-digits big' }, E.code.map(() => h('span', { class: 'esc-digit' }, '•')));
+    const keys = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map(d => h('button', { class: 'answer digit-btn', type: 'button' }, String(d)));
+    const msg = h('p', { class: 'muted' }, `Código: ${E.code.join(' ')}. Digite para abrir.`);
+    g.stage.replaceChildren(h('div', { class: 'escape-intro' }, h('h2', null, 'Abra o cadeado'), msg, show, h('div', { class: 'digit-pad pad10' }, keys)));
+    g.lock('');
+    while (typed.length < E.code.length) {
+      const d = await waitChoice(keys.map((k, i) => [k, i === 9 ? 0 : i + 1]));
+      if (!g.alive()) return;
+      const slot = show.children[typed.length];
+      if (d !== E.code[typed.length]) { slot.classList.add('bad'); Sound.chime('tap'); await sleep(350); slot.classList.remove('bad'); continue; }
+      slot.textContent = String(d);
+      slot.classList.add('open');
+      typed.push(d);
+      Synth.tap('drum');
+    }
+    g.stage.replaceChildren(h('div', { class: 'escape-intro' }, h('div', { class: 'escape-lock-big open' }, '🔓'), h('h2', null, 'Cadeado aberto!')));
+    Sound.chime('win');
+    burst(g.stage.firstChild, ['✦', '✧', '★', '🔓']);
+    await sleep(1600);
+  },
+};
+
+/* ---------- QR code (modo byte, correção L), gerado aqui mesmo: o jogo funciona sem internet ----------
+ * Implementação própria do padrão ISO/IEC 18004 (tabelas de blocos e Reed-Solomon do padrão). */
+const QR = (() => {
+  const ECC_L = [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30];
+  const BLOCKS_L = [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25];
+  const rawModules = v => {
+    let r = (16 * v + 128) * v + 64;
+    if (v >= 2) { const na = Math.floor(v / 7) + 2; r -= (25 * na - 10) * na - 55; if (v >= 7) r -= 36; }
+    return r;
+  };
+  const dataCodewords = v => Math.floor(rawModules(v) / 8) - ECC_L[v] * BLOCKS_L[v];
+  const gfMul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11d); z ^= ((y >>> i) & 1) * x; } return z & 0xff; };
+  function rsDivisor(deg) {
+    const r = new Array(deg).fill(0);
+    r[deg - 1] = 1;
+    let root = 1;
+    for (let i = 0; i < deg; i++) {
+      for (let j = 0; j < r.length; j++) { r[j] = gfMul(r[j], root); if (j + 1 < r.length) r[j] ^= r[j + 1]; }
+      root = gfMul(root, 2);
+    }
+    return r;
+  }
+  function rsRemainder(data, div) {
+    const r = div.map(() => 0);
+    for (const b of data) {
+      const f = b ^ r.shift();
+      r.push(0);
+      div.forEach((c, i) => { r[i] ^= gfMul(c, f); });
+    }
+    return r;
+  }
+  function alignPos(v) {
+    if (v === 1) return [];
+    const na = Math.floor(v / 7) + 2;
+    const step = Math.floor((v * 8 + na * 3 + 5) / (na * 4 - 4)) * 2;
+    const r = [6];
+    for (let pos = v * 4 + 10; r.length < na; pos -= step) r.splice(1, 0, pos);
+    return r;
+  }
+  function encode(text) {
+    const bytes = [...new TextEncoder().encode(text)];
+    let v = 1;
+    for (; v <= 40; v++) { const cc = v < 10 ? 8 : 16; if (4 + cc + bytes.length * 8 <= dataCodewords(v) * 8) break; }
+    if (v > 40) throw new Error('Texto longo demais para o QR code.');
+    const bits = [];
+    const put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+    put(4, 4);
+    put(bytes.length, v < 10 ? 8 : 16);
+    bytes.forEach(b => put(b, 8));
+    const cap = dataCodewords(v) * 8;
+    put(0, Math.min(4, cap - bits.length));
+    put(0, (8 - bits.length % 8) % 8);
+    for (let pad = 0xec; bits.length < cap; pad ^= 0xec ^ 0x11) put(pad, 8);
+    const data = [];
+    for (let i = 0; i < bits.length; i += 8) data.push(bits.slice(i, i + 8).reduce((a, b) => (a << 1) | b, 0));
+    // blocos + correção de erros, intercalados
+    const nb = BLOCKS_L[v];
+    const ecl = ECC_L[v];
+    const raw = Math.floor(rawModules(v) / 8);
+    const nShort = nb - raw % nb;
+    const shortLen = Math.floor(raw / nb);
+    const div = rsDivisor(ecl);
+    const blocks = [];
+    for (let i = 0, k = 0; i < nb; i++) {
+      const dat = data.slice(k, k + shortLen - ecl + (i < nShort ? 0 : 1));
+      k += dat.length;
+      const ecc = rsRemainder(dat, div);
+      if (i < nShort) dat.push(0);
+      blocks.push(dat.concat(ecc));
+    }
+    const cw = [];
+    for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== shortLen - ecl || j >= nShort) cw.push(b[i]); });
+    // matriz
+    const size = v * 4 + 17;
+    const M = Array.from({ length: size }, () => new Array(size).fill(false));
+    const F = Array.from({ length: size }, () => new Array(size).fill(false));
+    const set = (x, y, d) => { M[y][x] = d; F[y][x] = true; };
+    for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    const finder = (cx, cy) => {
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const x = cx + dx;
+        const y = cy + dy;
+        if (x >= 0 && x < size && y >= 0 && y < size) { const d = Math.max(Math.abs(dx), Math.abs(dy)); set(x, y, d !== 2 && d !== 4); }
+      }
+    };
+    finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+    const ap = alignPos(v);
+    ap.forEach((ay, i) => ap.forEach((ax, j) => {
+      if ((i === 0 && j === 0) || (i === 0 && j === ap.length - 1) || (i === ap.length - 1 && j === 0)) return;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(ax + dx, ay + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }));
+    const drawFormat = mask => {
+      const d = (1 << 3) | mask;                 // L = 01
+      let r = d;
+      for (let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+      const b = ((d << 10) | r) ^ 0x5412;
+      const bit = i => ((b >>> i) & 1) !== 0;
+      for (let i = 0; i <= 5; i++) set(8, i, bit(i));
+      set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+      for (let i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+      for (let i = 0; i < 8; i++) set(size - 1 - i, 8, bit(i));
+      for (let i = 8; i < 15; i++) set(8, size - 15 + i, bit(i));
+      set(8, size - 8, true);
+    };
+    drawFormat(0);
+    if (v >= 7) {
+      let r = v;
+      for (let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1f25);
+      const b = (v << 12) | r;
+      for (let i = 0; i < 18; i++) { const d = ((b >>> i) & 1) !== 0; const a = size - 11 + i % 3; const c = Math.floor(i / 3); set(a, c, d); set(c, a, d); }
+    }
+    // dados em zigue-zague
+    let bi = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (let vert = 0; vert < size; vert++) {
+        for (let j = 0; j < 2; j++) {
+          const x = right - j;
+          const up = ((right + 1) & 2) === 0;
+          const y = up ? size - 1 - vert : vert;
+          if (!F[y][x] && bi < cw.length * 8) { M[y][x] = ((cw[bi >>> 3] >>> (7 - (bi & 7))) & 1) !== 0; bi++; }
+        }
+      }
+    }
+    const maskFn = [
+      (x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, x => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+      (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => (x * y) % 2 + (x * y) % 3 === 0,
+      (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0, (x, y) => ((x + y) % 2 + (x * y) % 3) % 2 === 0,
+    ];
+    const applyMask = m => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!F[y][x] && maskFn[m](x, y)) M[y][x] = !M[y][x]; };
+    const penalty = () => {
+      let p = 0;
+      const line = get => {
+        let run = 1;
+        for (let i = 1; i <= size; i++) {
+          if (i < size && get(i) === get(i - 1)) run++;
+          else { if (run >= 5) p += run - 2; run = 1; }
+        }
+        for (let i = 0; i + 10 < size; i++) {
+          const s = Array.from({ length: 11 }, (_, k) => (get(i + k) ? 1 : 0)).join('');
+          if (s === '10111010000' || s === '00001011101') p += 40;
+        }
+      };
+      for (let y = 0; y < size; y++) line(x => M[y][x]);
+      for (let x = 0; x < size; x++) line(y => M[y][x]);
+      let dark = 0;
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        if (M[y][x]) dark++;
+        if (x < size - 1 && y < size - 1 && M[y][x] === M[y][x + 1] && M[y][x] === M[y + 1][x] && M[y][x] === M[y + 1][x + 1]) p += 3;
+      }
+      p += Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10;
+      return p;
+    };
+    let best = 0;
+    let bestP = Infinity;
+    for (let m = 0; m < 8; m++) {
+      applyMask(m); drawFormat(m);
+      const p = penalty();
+      if (p < bestP) { bestP = p; best = m; }
+      applyMask(m);
+    }
+    applyMask(best); drawFormat(best);
+    return { size, modules: M, version: v, mask: best };
+  }
+  function svg(text, px = 4) {
+    const q = encode(text);
+    const n = q.size + 8;
+    let d = '';
+    q.modules.forEach((row, y) => row.forEach((on, x) => { if (on) d += `M${x + 4} ${y + 4}h1v1h-1z`; }));
+    return `<svg class="qr" viewBox="0 0 ${n} ${n}" width="${n * px}" height="${n * px}" shape-rendering="crispEdges" role="img" aria-label="QR code"><rect width="${n}" height="${n}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+  }
+  return { encode, svg, rs: (data, deg) => rsRemainder(data, rsDivisor(deg)) };
+})();
+
+/* ---------- tarefa de casa ----------
+ * A fono escolhe as atividades e gera um link (ou QR code) com tudo de que o celular precisa:
+ * o adolescente, os pares da rodada e os níveis. No celular, ele treina e exporta um arquivo de
+ * resultado (compartilhar ou baixar); a fono importa no tablet e as sessões entram no histórico dele. */
+const HW_ACTS = ['pseudo', 'anagram', 'family', 'reviser', 'sentdict', 'fast', 'compnoise', 'gap', 'tones', 'wmem', 'escape'];
+const b64url = str => btoa(String.fromCharCode(...new TextEncoder().encode(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64url = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)));
+async function homeworkPayload(kid, acts, rounds) {
+  const gid = 'sintonia';
+  const G = groupOf(gid);
+  const ids = new Set(await roundPairIds(kid.id, gid));
+  const pairs = Bank.inGroup(gid).filter(p => ids.has(p.id) && !p.pseudo).slice(0, 10).map(p => [p.id, p.contrast, p.a.text, p.b.text]);
+  const lv = {};
+  for (const a of acts) { const st = await Levels.get(kid.id, ACTIVITIES[a], G); if (st.max) lv[a] = st.level; }
+  return { v: 1, id: uid(), k: [kid.id, kid.nick, kid.avatar], a: acts, r: rounds, l: lv, p: pairs, d: dayKey() };
+}
+const homeworkLink = payload => `${location.origin}${location.pathname}#tarefa=${b64url(JSON.stringify(payload))}`;
+
+/** No celular: abre a tarefa vinda do link e prepara o aparelho (criança, pares, atividades e níveis). */
+async function acceptHomework(hw) {
+  const [kidId, nick, avatar] = hw.k;
+  const kid = (await DB.get('children', kidId)) || { id: kidId, nick, avatar, group: 'sintonia', created: new Date().toISOString() };
+  kid.nick = nick; kid.avatar = avatar; kid.group = 'sintonia'; kid.homework = true;
+  await DB.put('children', kid);
+  const ids = [];
+  for (const [id, contrast, a, b] of hw.p || []) {
+    // Mesmo id do tablet: assim o resultado volta ligado ao par certo.
+    const p = Bank.get(id);
+    const pair = p && sameText(p.a.text, a) && sameText(p.b.text, b) ? { ...p, groups: [...new Set([...p.groups, 'sintonia'])] }
+      : { id, contrast, a: { text: a, emoji: '', img: null }, b: { text: b, emoji: '', img: null }, figure: false, order: 900 + ids.length, groups: ['sintonia'] };
+    await DB.put('pairs', pair);
+    ids.push(id);
+  }
+  await Bank.load();
+  if (ids.length) await saveRoundPairIds(kidId, 'sintonia', ids);
+  await DB.setKv(`acts:${kidId}:sintonia`, Object.fromEntries(Object.keys(ACTIVITIES).map(id => [id, hw.a.includes(id)])));
+  for (const [a, l] of Object.entries(hw.l || {})) { const cur = await DB.kv(Levels.key(kidId, a), null); if (!cur) await Levels.set(kidId, a, l, false); }
+  await DB.setKv('hw:active', hw);
+  State.homework = hw;
+}
+State.homework = null;
+InitHooks.push(async () => {
+  const m = location.hash.match(/^#tarefa=([A-Za-z0-9_-]+)$/);
+  if (m) {
+    try {
+      const hw = JSON.parse(unb64url(m[1]));
+      if (hw && hw.v === 1 && Array.isArray(hw.a) && Array.isArray(hw.k)) await acceptHomework(hw);
+    } catch (e) { console.warn('tarefa inválida', e); toast('Este link de tarefa está incompleto. Peça um novo para a fono.', 6000); }
+    history.replaceState(null, '', location.pathname + location.search);
+  } else State.homework = await DB.kv('hw:active', null);
+  if (State.homework) { State.boot = 'homework'; State.group = 'sintonia'; }
+});
+/** Sessões desta tarefa já feitas no celular. */
+async function homeworkSessions(hw) {
+  return (await allSessions()).filter(s => s.hw === hw.id && s.childId === hw.k[0]);
+}
+async function exportHomework(hw) {
+  const ss = (await homeworkSessions(hw)).filter(s => s.trials.length);
+  const data = { app: 'escuta-so', kind: 'tarefa', format: 1, appVersion: APP_VERSION, hwId: hw.id, kid: { id: hw.k[0], nick: hw.k[1] }, sent: hw.d, exportedAt: new Date().toISOString(), sessions: ss };
+  const name = `escuta-so-tarefa-${slug(hw.k[1])}-${dayKey()}.json`;
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const file = new File([blob], name, { type: 'application/json' });
+  if (canShareFile(file)) { const r = await shareFile(file); if (r === 'fail') downloadBlob(blob, name); } else downloadBlob(blob, name);
+  const prof = await getTeen(hw.k[0]);
+  if (!prof.homeworkSent) {
+    prof.homeworkSent = new Date().toISOString();
+    if (!prof.ach.homework) prof.ach.homework = prof.homeworkSent;
+    await saveTeen(hw.k[0], prof);
+  }
+  await DB.setKv('hw:exported:' + hw.id, new Date().toISOString());
+}
+Screens.homework = {
+  themed: true,
+  async render(app, params, alive) {
+    const hw = State.homework || await DB.kv('hw:active', null);
+    if (!hw) { go('start'); return; }
+    State.group = 'sintonia';
+    const kid = (await DB.get('children', hw.k[0])) || { id: hw.k[0], nick: hw.k[1], avatar: hw.k[2] };
+    State.child = normKid(kid);
+    const ss = await homeworkSessions(hw);
+    const exported = await DB.kv('hw:exported:' + hw.id, null);
+    if (!alive()) return;
+    const rows = hw.a.filter(a => ACTIVITIES[a]).map(a => {
+      const def = ACTIVITIES[a];
+      const done = ss.filter(s => s.mode === a && s.complete).length;
+      const ok = done >= hw.r;
+      return h('div', { class: 'hw-row' + (ok ? ' done' : '') },
+        h('span', { class: 'tt-icon' }, def.icon),
+        h('span', { class: 'hw-name' }, h('strong', null, def.name), h('span', { class: 'muted small' }, `${Math.min(done, hw.r)} de ${hw.r} ${hw.r === 1 ? 'rodada' : 'rodadas'}`)),
+        ok ? h('span', { class: 'hw-ok' }, '✔') : h('button', { class: 'btn primary', type: 'button', onclick: () => go('game', { mode: a }) }, 'Fazer'));
+    });
+    const total = hw.a.filter(a => ACTIVITIES[a]).length;
+    const doneN = hw.a.filter(a => ss.filter(s => s.mode === a && s.complete).length >= hw.r).length;
+    const send = h('button', { class: 'btn primary big', type: 'button', disabled: !ss.some(s => s.trials.length) }, '📤 Enviar resultado para a fono');
+    send.onclick = async () => { await exportHomework(hw); go('homework'); };
+    add(app, [
+      h('div', { class: 'topbar' }, h('button', { class: 'child-chip', type: 'button', onclick: () => go('menu') }, h('span', { class: 'avatar' }, kid.avatar), h('span', null, kid.nick)), h('div', { class: 'spacer' }), fonoButton()),
+      h('div', { class: 'teen-menu hw-screen' },
+        h('section', { class: 'teen-hero hw-hero' },
+          h('div', { class: 'teen-hello' }, h('span', { class: 'teen-hi' }, '📚 Tarefa de casa'), h('span', { class: 'teen-streak' }, `Da fono, em ${fmtDate(hw.d + 'T12:00:00')} · ${doneN} de ${total} feitas`))),
+        h('div', { class: 'hw-list' }, rows),
+        h('div', { class: 'hw-send' }, send,
+          h('p', { class: 'muted small' }, exported ? `Último envio: ${fmtDateTime(exported)}. Pode enviar de novo depois de jogar mais.` : 'Quando terminar, envie o arquivo para a fono (WhatsApp, e-mail…). Ela importa no tablet.'),
+          h('button', { class: 'btn', type: 'button', onclick: () => go('menu') }, 'Ver todas as atividades'))),
+    ]);
+  },
+};
+
+/* ---------- aba "Tarefa de casa" (área da fono) ---------- */
+FonoTabs.push({ id: 'tarefa', label: 'Tarefa de casa', icon: '🏠', order: 1.7, render: renderHomeworkTab });
+async function renderHomeworkTab(el) {
+  const kids = (await allChildren());
+  const teens = kids.filter(k => kidGroup(k) === 'sintonia');
+  const list = teens.length ? teens : kids;
+  const sent = await DB.kv('hw:sent', []);
+  const importInput = h('input', { type: 'file', accept: '.json,application/json', hidden: true });
+  importInput.onchange = async () => {
+    const f = importInput.files[0];
+    importInput.value = '';
+    if (f) await importHomeworkFile(f, kids, () => { el.replaceChildren(); renderHomeworkTab(el); });
+  };
+  add(el, [
+    h('div', { class: 'tab-head' }, h('h2', null, 'Tarefa de casa'),
+      h('button', { class: 'btn', type: 'button', onclick: () => importInput.click() }, '📥 Importar resultado'), importInput),
+    h('p', { class: 'muted' }, 'Escolha as atividades e gere um link (ou QR code). O adolescente abre no celular, treina e no fim toca em “Enviar resultado para a fono”. Você importa o arquivo aqui e as sessões entram no histórico dele (Evolução). Funciona com a faixa Sintonia.'),
+  ]);
+  if (!list.length) { el.append(h('p', { class: 'empty' }, 'Cadastre o adolescente em “Crianças” (faixa Sintonia) para gerar uma tarefa.')); return; }
+  const kidSel = h('select', { class: 'input' }, list.map(k => h('option', { value: k.id }, `${k.avatar} ${k.nick}`)));
+  const roundsSel = h('select', { class: 'input small-select' }, [1, 2, 3].map(n => h('option', { value: n }, `${n} ${n === 1 ? 'rodada' : 'rodadas'} de cada`)));
+  const checks = HW_ACTS.filter(id => ACTIVITIES[id]).map(id => {
+    const cb = h('input', { type: 'checkbox', checked: ['pseudo', 'sentdict', 'family', 'fast'].includes(id) });
+    return { id, cb, el: h('label', { class: 'check' }, cb, h('span', null, `${ACTIVITIES[id].icon} ${ACTIVITIES[id].name}`)) };
+  });
+  const out = h('div', { class: 'hw-out' });
+  const gen = h('button', { class: 'btn primary', type: 'button' }, '🔗 Gerar link e QR code');
+  gen.onclick = async () => {
+    const kid = list.find(k => k.id === kidSel.value);
+    const acts = checks.filter(c => c.cb.checked).map(c => c.id);
+    if (!acts.length) { toast('Escolha pelo menos uma atividade.'); return; }
+    const payload = await homeworkPayload(kid, acts, +roundsSel.value);
+    const link = homeworkLink(payload);
+    let qr = '';
+    try { qr = QR.svg(link, 3); } catch (e) { qr = ''; }
+    const linkBox = h('input', { class: 'input', readonly: true, value: link });
+    const copy = h('button', { class: 'btn small', type: 'button' }, '📋 Copiar link');
+    copy.onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copiado.'); } catch (_) { linkBox.select(); document.execCommand('copy'); toast('Link copiado.'); } };
+    const share = navigator.share ? h('button', { class: 'btn small', type: 'button', onclick: () => navigator.share({ title: 'Tarefa do Escuta Só!', text: `Tarefa de casa de ${kid.nick}`, url: link }).catch(() => {}) }, '📤 Compartilhar') : null;
+    out.replaceChildren();
+    add(out, [
+      h('h3', null, `Tarefa de ${kid.nick}: ${acts.length} ${acts.length === 1 ? 'atividade' : 'atividades'}`),
+      qr && h('div', { class: 'qr-box', html: qr }),
+      h('p', { class: 'muted small' }, 'Mostre o QR code para a câmera do celular, ou mande o link. O celular precisa de internet só para abrir a primeira vez.'),
+      h('div', { class: 'row wrap' }, linkBox, copy, share),
+    ]);
+    const s2 = await DB.kv('hw:sent', []);
+    s2.unshift({ id: payload.id, kidId: kid.id, nick: kid.nick, acts, rounds: payload.r, date: new Date().toISOString(), imported: null });
+    await DB.setKv('hw:sent', s2.slice(0, 30));
+  };
+  add(el, [
+    h('div', { class: 'setting' }, h('div', null, h('strong', null, 'Adolescente')), kidSel),
+    h('div', { class: 'setting' }, h('div', null, h('strong', null, 'Atividades')), h('div', { class: 'checks' }, checks.map(c => c.el))),
+    h('div', { class: 'setting' }, h('div', null, h('strong', null, 'Quantidade')), roundsSel),
+    gen,
+    out,
+    sent.length > 0 && h('h3', null, 'Tarefas geradas'),
+    sent.length > 0 && h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Data'), h('th', null, 'Adolescente'), h('th', null, 'Atividades'), h('th', null, 'Resultado'))),
+      h('tbody', null, sent.map(x => h('tr', null, h('td', null, fmtDate(x.date)), h('td', null, x.nick), h('td', { class: 'small wrap' }, x.acts.map(actName).join(', ')),
+        h('td', { class: 'small' }, x.imported ? `importado em ${fmtDate(x.imported)} (${x.count} sessões)` : 'aguardando')))))),
+  ]);
+}
+/** Importa o arquivo de resultado da tarefa: as sessões entram no histórico do adolescente. */
+async function importHomeworkFile(file, kids, done) {
+  let data;
+  try { data = JSON.parse(await file.text()); } catch (_) { data = null; }
+  if (!data || data.app !== 'escuta-so' || data.kind !== 'tarefa' || !Array.isArray(data.sessions)) { toast('Este arquivo não é um resultado de tarefa do Escuta Só!.', 6000); return; }
+  let kid = kids.find(k => k.id === data.kid.id);
+  if (!kid) {
+    const sel = h('select', { class: 'input' }, kids.map(k => h('option', { value: k.id }, `${k.avatar} ${k.nick}`)));
+    const ok = await new Promise(resolve => openOverlay([
+      h('h2', null, 'De quem é esta tarefa?'),
+      h('p', null, `O arquivo é de “${data.kid.nick}”, que não está cadastrado neste aparelho. Escolha o adolescente:`), sel,
+      h('div', { class: 'dialog-actions' }, h('button', { class: 'btn ghost', type: 'button', onclick: () => { closeOverlay(); resolve(false); } }, 'Cancelar'),
+        h('button', { class: 'btn primary', type: 'button', onclick: () => { closeOverlay(); resolve(true); } }, 'Importar'))], { dismissible: false }));
+    if (!ok) return;
+    kid = kids.find(k => k.id === sel.value);
+  }
+  const have = new Set((await allSessions()).map(s => s.id));
+  const fresh = data.sessions.filter(s => s && s.id && Array.isArray(s.trials) && !have.has(s.id)).map(s => normSession({ ...s, childId: kid.id, group: 'sintonia', fromHomework: data.hwId }));
+  if (fresh.length) await DB.write('sessions', t => fresh.forEach(s => t.objectStore('sessions').put(s)));
+  const sent = await DB.kv('hw:sent', []);
+  const row = sent.find(x => x.id === data.hwId);
+  if (row) { row.imported = new Date().toISOString(); row.count = (row.count || 0) + fresh.length; await DB.setKv('hw:sent', sent); }
+  toast(fresh.length ? `${fresh.length} ${fresh.length === 1 ? 'sessão importada' : 'sessões importadas'} para ${kid.nick}. Veja em Evolução.` : 'Essas sessões já tinham sido importadas.', 6000);
+  done();
+}
+
+/* @@PART6@@ */
+
 
 
 
