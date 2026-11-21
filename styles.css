@@ -913,10 +913,10 @@ table.data .num { text-align: right; }
   transition: transform .15s;
 }
 .group-card:active { transform: translateY(4px) scale(.98); }
-.group-art { height: clamp(110px, 24vmin, 220px); display: grid; place-items: center; }
+.group-art { height: clamp(100px, 20vmin, 200px); max-width: 100%; display: grid; place-items: center; }
 .group-art svg { height: 100%; width: auto; }
 .group-critters { display: flex; align-items: flex-end; gap: 4%; height: 100%; }
-.group-critters .critter { height: 100%; width: auto; }
+.group-critters .critter { height: 100%; width: auto; max-width: 48%; }
 .group-critters .critter:last-child { height: 82%; }
 .group-name { font-size: clamp(26px, 4.6vmin, 40px); font-weight: 800; line-height: 1.15; text-align: center; }
 .group-ages { font-size: clamp(18px, 3vmin, 24px); font-weight: 700; opacity: .8; }
@@ -1584,7 +1584,7 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
 [data-theme="explorer"] .level-chip { background: #fff; border: 2px solid var(--teal); color: var(--teal); }
 .group-explorer { background: linear-gradient(160deg, #e7f8ec, #fffbe6); border: 3px solid #19a974; color: #1f3b2e; }
 .group-explorer .group-ages { color: #19a974; }
-.group-emojis { font-family: var(--emoji); font-size: clamp(56px, 11vmin, 100px); display: flex; gap: 10px; align-items: center; line-height: 1; }
+.group-emojis { font-family: var(--emoji); font-size: clamp(38px, 7vmin, 84px); display: flex; gap: 4px; align-items: center; line-height: 1; }
 .group-emojis b { font-family: var(--font); color: #19a974; font-size: 1.15em; }
 
 /* ---------- área da fono: atividades abertas e listas ---------- */
@@ -1824,9 +1824,9 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
 .rev-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: min(1000px, 100%); }
 .rev-kind { font-weight: 800; color: var(--muted); }
 .rev-count { font-weight: 800; padding: 6px 12px; border-radius: 999px; background: var(--soft, #eee); font-variant-numeric: tabular-nums; }
-.rev-text { display: flex; flex-wrap: wrap; gap: 6px 6px; width: min(1000px, 100%); padding: 16px 18px; border-radius: 18px; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow-sm); line-height: 1.5; }
+.rev-text { display: block; text-align: left; width: min(1000px, 100%); padding: 16px 18px; border-radius: 18px; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow-sm); line-height: 1.5; }
 .rev-text.speaking { box-shadow: 0 0 0 4px rgba(108, 92, 231, .2); }
-.rev-tok { padding: 2px 4px; border-radius: 8px; border: 2px solid transparent; font-size: clamp(19px, 2.9vmin, 26px); font-weight: 600; color: var(--ink); background: none; }
+.rev-tok { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 4px; border-radius: 8px; border: 2px solid transparent; font-size: clamp(19px, 2.9vmin, 26px); font-weight: 600; color: var(--ink); background: none; }
 .rev-tok:active { background: var(--soft, #eee); }
 .rev-tok.found { border-color: var(--accent, var(--blue)); }
 .rev-tok.fixed { border-color: var(--mint, var(--lime)); color: var(--mint, var(--lime)); }
@@ -1834,7 +1834,7 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
 .rev-tok.false { animation: nudge .35s; border-color: var(--line); background: var(--soft, #eee); }
 .rev-tok.missed { border-color: var(--orange); border-style: dashed; }
 .rev-tok mark { background: none; color: var(--orange); text-decoration: underline 3px; text-underline-offset: 4px; }
-.rev-fix { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; min-height: 84px; width: min(1000px, 100%); text-align: center; }
+.rev-fix { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 10px 14px; flex-wrap: wrap; min-height: 84px; width: min(1000px, 100%); padding: 8px 0; text-align: center; background: var(--bg); }
 .rev-fix-word { font-size: clamp(28px, 5vmin, 40px); font-weight: 800; }
 .rev-fix-word mark { background: none; color: var(--orange); text-decoration: underline 4px; text-underline-offset: 6px; }
 .rev-summary { display: flex; flex-direction: column; align-items: center; gap: 4px; }
@@ -1923,7 +1923,6 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
 .sv-btn { min-height: 52px; border-radius: 12px; border: 2px solid var(--line); background: var(--bg); color: var(--ink); font-size: 22px; font-weight: 800; }
 .sv-btn.on { background: var(--accent, var(--blue)); border-color: var(--accent, var(--blue)); color: #fff; }
 .sv-wrap .btn.big { align-self: center; }
-/* @@TEENCSS@@ */
 
 
 

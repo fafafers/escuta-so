@@ -314,7 +314,7 @@ MenuStyles.teen = async (app, { child, acts, top, alive }) => {
   const hero = h('section', { class: 'teen-hero' },
     h('div', { class: 'teen-hello' },
       h('span', { class: 'teen-hi' }, `E aí, ${child.nick}!`),
-      h('span', { class: 'teen-streak' + (streak ? ' live' : '') }, '🔥 ', streak ? `${streak} ${streak === 1 ? 'dia' : 'dias'} seguidos` : 'treine hoje para começar uma sequência')),
+      h('span', { class: 'teen-streak' + (streak ? ' live' : '') }, '🔥 ', streak > 1 ? `${streak} dias seguidos` : streak ? '1 dia de sequência: volte amanhã para continuar' : 'treine hoje para começar uma sequência')),
     teenXpBar(prof.xp),
     h('div', { class: 'teen-toggles' },
       teenToggle('⏱', 'Cronômetro', !!prof.timer, async on => {
@@ -2050,7 +2050,7 @@ const QR = (() => {
     q.modules.forEach((row, y) => row.forEach((on, x) => { if (on) d += `M${x + 4} ${y + 4}h1v1h-1z`; }));
     return `<svg class="qr" viewBox="0 0 ${n} ${n}" width="${n * px}" height="${n * px}" shape-rendering="crispEdges" role="img" aria-label="QR code"><rect width="${n}" height="${n}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
   }
-  return { encode, svg, rs: (data, deg) => rsRemainder(data, rsDivisor(deg)) };
+  return { encode, svg };
 })();
 
 /* ---------- tarefa de casa ----------

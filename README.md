@@ -2,11 +2,12 @@
 
 Jogo de **percepção auditiva, consciência fonológica e relação som-letra** para usar nas sessões, com foco nas trocas surdo × sonoro: /p/×/b/, /t/×/d/, /k/×/g/, /f/×/v/, /s/×/z/ e /ʃ/×/ʒ/.
 
-O jogo tem três **faixas etárias**, cada uma com visual próprio:
+O jogo tem quatro **faixas etárias**, cada uma com visual próprio:
 
 - 🧸 **Pequenos Ouvintes (4 a 5 anos):** colorido, com bichinhos e **sem nenhum texto**. É só figura e som.
 - 🧭 **Exploradores das Letras (6 a 8 anos):** a fase da alfabetização, uma ponte entre ouvir e escrever. Tem visual de caderno e as palavras escritas aparecem junto das figuras.
 - 🕵️ **Detetives do Som (9 a 11 anos):** cara de jogo, com missões, patentes e insígnias. Mistura ouvir, ler e escrever.
+- 🎧 **Sintonia (12 a 15 anos):** visual limpo de app (claro ou escuro), sem bichinhos. Textos do dia a dia, vocabulário escolar, processamento auditivo, XP e conquistas, e **tarefa de casa no celular**. Veja o item 8.
 
 A faixa define só o **pacote e o nível inicial sugeridos**. Qualquer atividade pode ser liberada para qualquer criança.
 
@@ -23,7 +24,7 @@ Abra o endereço acima uma vez, com internet, e instale:
 
 Depois disso o jogo abre pelo ícone e **funciona sem internet**.
 
-> **Já usava uma versão anterior?** Faça um backup antes (item 9). Depois é só abrir o jogo com internet: a atualização é baixada sozinha e passa a valer na abertura seguinte. Gravações, crianças, histórico e ajustes continuam lá. Se aparecer **"Atualizando o Escuta Só!…"**, feche o jogo nas outras abas ou janelas (ou feche o app e abra de novo).
+> **Já usava uma versão anterior?** Faça um backup antes (item 10). Depois é só abrir o jogo com internet: a atualização é baixada sozinha e passa a valer na abertura seguinte. Gravações, crianças, histórico e ajustes continuam lá. Se aparecer **"Atualizando o Escuta Só!…"**, feche o jogo nas outras abas ou janelas (ou feche o app e abra de novo).
 
 ## 2. Entrar na área da fono
 
@@ -41,6 +42,7 @@ Na tela inicial (ou em qualquer menu), **segure o botãozinho ⚙️ no canto po
 
   Sem essa gravação, o jogo toca uma palavra que começa com o som.
 - Palavras de cada atividade, sílabas do Código secreto, frases da Frase maluca (opcional) e sons de bichos e objetos (já vêm prontos; grave por cima se quiser).
+- **Sintonia:** os **números de 1 a 9** (obrigatórios para a Atenção dirigida, que toca um som em cada ouvido: a voz sintética não faz isso) e, se quiser, as **frases** e os **textos** (até 40 segundos cada).
 - O que não estiver gravado usa a **voz sintética** do aparelho, que é menos precisa. No jogo aparece o aviso "voz sintética".
 - **Ruído, filtro, "ouvir devagar" (0,75×) e som em um ouvido só são aplicados pelo jogo sobre a sua gravação.** Não precisa gravar versões extras.
 - **✏️ Editar** muda a palavra, o emoji ou a foto e escolhe as faixas do par. **➕ Novo par** cria pares novos.
@@ -49,13 +51,22 @@ Na tela inicial (ou em qualquer menu), **segure o botãozinho ⚙️ no canto po
 
 Área da fono → **Listas**: rimas, Mesmo começo, Bate palminhas, Frase maluca, Onde mora o som e Trem do som. Dá para editar, acrescentar, apagar ou voltar à lista inicial.
 
+Da **Sintonia**:
+
+- **🎓 Vocabulário escolar:** 73 palavras com a matéria marcada (Ciências, Geografia, História, Matemática, Português), como *fotossíntese*, *latitude*, *ditadura*, *porcentagem*, *advérbio*.
+- **🌳 Famílias de palavras:** *foto, fotografia, fotógrafo, fotográfico*; *verde, verdura, esverdeado*… com o som da raiz que se mantém.
+- **👽 Pseudopalavras:** *tadefo*, *vupeca*, *gofita*… Além da lista, o jogo **gera novas pela regra** (sílabas consoante + vogal possíveis no PB, qu/gu antes de e/i) e não usa palavras que existem.
+- **🗣️ Frases:** do dia a dia, para o Ditado de frases e a Fala acelerada.
+- **📰 Textos curtos:** mensagem de WhatsApp, post, legenda, trecho de redação, notícia e instrução (receita, regra de jogo). Para a Escuta no barulho, o texto precisa das 3 perguntas.
+
 O jogo **confere pelo SOM, não pela letra**:
 
 - c/g antes de e/i não são /k/ /g/ (*cegonha* e *tigela* são recusadas para K×G);
 - qu e gu contam como /k/ e /g/;
 - no Trem do som, a palavra precisa ter o som **uma vez só** (*dado* não serve);
 - no Mesmo começo, o primeiro som precisa bater;
-- em Onde mora o som, a palavra precisa ter pelo menos 2 lugares do som (pode ser um só dos sons, como *apartamento* em T×D). Dá para **misturar contrastes** (P×B + T×D) para deixar mais difícil, e a lista mostra em que nível cada palavra entra.
+- em Onde mora o som, a palavra precisa ter pelo menos 2 lugares do som (pode ser um só dos sons, como *apartamento* em T×D). Dá para **misturar contrastes** (P×B + T×D) para deixar mais difícil, e a lista mostra em que nível cada palavra entra;
+- nas famílias, a troca feita pelo jogo é conferida relendo a palavra (*fotográfico* → *votográfico*); ç, ss e s entre vogais (/z/) também são lidos pelo som.
 
 Um item que não passa na conferência fica fora do jogo, com um aviso na lista. As listas entram no backup.
 
@@ -79,10 +90,12 @@ Um item que não passa na conferência fica fora do jogo, com um aviso na lista.
 6. Frases
 7. Escrita
 8. Ruído, filtro e sequência
+9. Compreensão no ruído (textos)
 
 - A tabela mostra a % de acerto em cada degrau, ✓ nos dominados e ▶ no atual.
 - **Regra:** sobe com **80% ou mais em 2 rodadas seguidas** e volta com **menos de 50%**.
 - Você pode 🔒 travar um contraste num degrau. **"Ligar as atividades do degrau atual"** monta o pacote da criança automaticamente.
+- **Sintonia começa no degrau mais alto** (e no nível mais alto de cada atividade) e só desce para um degrau em que foi mal, pela mesma regra.
 
 ### Níveis de cada atividade
 
@@ -172,7 +185,44 @@ Na tela inicial, toque na **faixa** (isso também libera o som). A criança toca
 
 **Recompensas:** estrelas e figurinhas no álbum 📖 (Pequenos e Exploradores); mapa de missões, patentes e insígnias (Detetives).
 
-## 8. Ver a evolução
+## 8. Faixa Sintonia (12 a 15 anos)
+
+- **Visual:** limpo, de app. O adolescente escolhe **tema claro ou escuro** no próprio menu.
+- **Gamificação sem comparação:** XP e nível, **sequência de dias treinados** 🔥, **conquistas** 🏆 e **recorde pessoal** de cada atividade (acerto, limiar e tempo). Não existe ranking entre pacientes.
+- **⏱ Cronômetro opcional:** liga no menu. Conta o tempo da rodada como desafio (bônus de XP com 80% ou mais) e **nunca corta uma resposta**.
+- **Correção explicada:** no erro aparece o tipo da troca, por exemplo *"Você trocou um som sem vibração (/f/) por um que vibra (/v/), no início da palavra"*, e o jogo toca as duas formas.
+- As atividades das outras faixas continuam liberáveis em Rodada.
+
+### Atividades da Sintonia
+
+| Atividade | Para que serve |
+|---|---|
+| 📝 **Revisor** | Leitura e revisão ortográfica: texto do dia a dia com 3 a 6 trocas surda/sonora colocadas pelo jogo. Toca nas palavras erradas e corrige a letra; pode ouvir o texto lido. Nível = nº de erros e tamanho do texto. |
+| ⌨️ **Ditado de frases** | Escrita de frases ouvidas, no teclado do aparelho. A correção é palavra a palavra e separa **erro de sonoridade** de outros erros (acento pode ser ignorado em Ajustes). Tem 🐢 ouvir devagar. |
+| 👽 **Palavra que não existe** | **Rota fonológica:** pseudopalavra ouvida → escolhe entre 4 grafias (*tadefo / dadefo / tatefo / dadevo*) ou escreve. Sem o sentido para ajudar. |
+| 🔀 **Anagrama sonoro** | Consciência fonológica + escrita: monta palavra do vocabulário escolar com letras embaralhadas e **iscas do par trocado**. |
+| 🌳 **Família do som** | Raciocínio morfológico: acha a palavra da família escrita com a troca (*votográfico*), corrige e explica **por quê** (o som se mantém na família). |
+| ⏩ **Fala acelerada** | **Fechamento auditivo:** frases de 1,25× a 2× **sem mudar o tom** da voz; escolhe ou escreve o que ouviu. Velocidade adaptativa. |
+| 📻 **Escuta no barulho** | **Figura-fundo + compreensão:** notícia, receita ou instrução com ruído de fundo, depois 3 perguntas. Ruído adaptativo. É o degrau 9 da escada. |
+| 🎧 **Atenção dirigida** | **Escuta dicótica com atenção dirigida:** dois números (ou palavras) ao mesmo tempo, um em cada ouvido; responde só o direito, só o esquerdo ou os dois. Tem teste de esquerda/direita antes. *(Liga na Rodada; precisa de fone e da gravação dos números.)* |
+| 🔬 **Caça à pausa** | **Resolução temporal:** toca quando ouvir um silêncio curtinho num chiado. A pausa vai de 20 ms até 2 ms (adaptativa). Às vezes não tem pausa, para conferir. |
+| 🎼 **Padrão de tons** | **Ordenação temporal:** 3 a 5 tons grave/agudo ou curto/longo; reproduz nos botões. Sons gerados pelo jogo. |
+| 🧠 **Memória de trabalho** | **Memória de trabalho auditiva:** ouve 3 a 7 palavras dos pares e toca nas cartas na ordem e depois de trás para a frente. As cartas têm a palavra do par como isca. |
+| 🔐 **Escape room do som** | Missão encadeada de 4 a 5 desafios misturando as atividades. Cada acerto revela um dígito do cadeado; dá para pagar uma dica com XP. |
+
+### 🏠 Tarefa de casa (no celular do adolescente)
+
+1. Área da fono → **Tarefa de casa**: escolha o adolescente, as atividades e quantas rodadas de cada.
+2. **🔗 Gerar link e QR code.** Mostre o QR code para a câmera do celular dele ou mande o link (📋 Copiar / 📤 Compartilhar).
+3. No celular, o jogo abre **direto na tarefa**, com os pares e os níveis dele. Depois de aberto uma vez, funciona sem internet.
+4. No fim, ele toca em **📤 Enviar resultado para a fono** e manda o arquivo (WhatsApp, e-mail…).
+5. No tablet: **Tarefa de casa → 📥 Importar resultado**. As sessões entram no histórico dele (Evolução), marcadas como tarefa. Importar o mesmo arquivo duas vezes não duplica nada.
+
+### 📋 Questionário de autopercepção
+
+Uma vez por mês, o menu da Sintonia convida o adolescente a responder 6 perguntas rápidas: quanto foi difícil **entender o professor na sala**, **entender no barulho**, **acompanhar fala rápida**, **escrever sem trocar letras**, **anotar enquanto o professor fala** e **lembrar instruções longas** (1 = muito fácil, 5 = muito difícil). As perguntas são do próprio jogo (não é um protocolo publicado). As respostas aparecem em gráfico na Evolução.
+
+## 9. Ver a evolução
 
 Área da fono → **Evolução**: escolha a criança, a faixa e, se quiser, uma atividade. Aparecem:
 
@@ -181,9 +231,20 @@ Na tela inicial, toque na **faixa** (isso também libera o som). A criança toca
 - **% por posição do som (início, meio, fim)**, com gráfico. Nas atividades de pares, a posição é onde o par difere; em "Onde mora o som?" cada lugar conta separado;
 - **% por degrau da escada e por nível de cada atividade**;
 - a produção (certo/distorcido/errado) e os **desenhos do Som secreto**;
-- a lista de sessões e o **⬇️ CSV** (com faixa, atividade, nível, degrau, posição e produção).
+- **Tipo de troca: sonorização × dessonorização** (veja abaixo), por par, por posição e por tipo de atividade (ouvir, ler ou escrever);
+- **limiares alcançados** nas atividades adaptativas, com gráfico de evolução: ruído em dB (fala × ruído), velocidade da fala, menor pausa em ms e tamanho da sequência;
+- **acertos por ouvido** (Atenção dirigida e Fone de ouvido);
+- o **questionário de autopercepção** (Sintonia);
+- a lista de sessões e o **⬇️ CSV** (com faixa, atividade, nível, degrau, posição, produção, canal, sonorização, dessonorização, outros erros, ouvidos, limiar e as respostas do questionário).
 
-## 9. Backup (importante!)
+**Sonorização × dessonorização.** Cada erro em que um som foi trocado pelo seu par é classificado sozinho:
+
+- **Sonorização** = era para ser o som **surdo** (sem vibração) e veio o **sonoro**: *faca → vaca*, *pato → bato*, *quinta → quinda*.
+- **Dessonorização** = era para ser o **sonoro** e veio o **surdo**: *vaca → faca*, *dente → tente*.
+
+A classificação é feita **pelo som**: *casa → caça* conta como /z/ → /s/. Erros que não são troca de sonoridade (letra faltando, outra letra) ficam em "outros erros". Nas atividades antigas de pares, o jogo também classifica quando a resposta é a outra palavra do par.
+
+## 10. Backup (importante!)
 
 Tudo fica guardado **só no tablet**; nada vai para a internet.
 
@@ -192,15 +253,17 @@ Tudo fica guardado **só no tablet**; nada vai para a internet.
   - **Android:** **⬇️ Baixar arquivo**.
 - O arquivo leva palavras, fotos, as suas gravações, listas, crianças, histórico, níveis, planos e ajustes.
 - **As gravações da voz das crianças não entram no backup:** ficam só no aparelho.
-- **📂 Escolher arquivo de backup…** substitui tudo o que estiver no aparelho. **Backups das versões 1 e 2 também funcionam.**
+- **📂 Escolher arquivo de backup…** substitui tudo o que estiver no aparelho. **Backups das versões 1, 2 e 3 também funcionam.**
+- O arquivo da **tarefa de casa** não é um backup: ele é importado em **Tarefa de casa** e só acrescenta sessões.
 - Com mais de 14 dias sem backup, aparece um lembrete (e uma bolinha laranja no ⚙️).
 
 ## Dicas
 
 - **Sem som no iPad?** Confira o volume e o modo silencioso.
 - **O microfone não grava?** Permita o microfone para o site nas configurações do navegador. No iPad use o Safari; no Android, o Chrome.
-- **Fone de ouvido:** use os botões "Ouvir na esquerda/direita" para conferir o lado.
+- **Fone de ouvido:** use os botões "Ouvir na esquerda/direita" para conferir o lado. Na Atenção dirigida, o teste de lado é obrigatório antes de começar.
+- **QR code não abre?** Mande o link pelo WhatsApp: é o mesmo conteúdo.
 
 ---
 
-<sub>Feito com HTML, CSS e JavaScript puro, sem servidor: funciona offline como app instalado (PWA). Para publicar uma versão nova, aumente `CACHE` em `sw.js` e `APP_VERSION` em `app.js`. Uma faixa nova é só mais um objeto em `AGE_GROUPS` (pacote, níveis iniciais, contrastes e visual). A análise que guiou a versão 3 está em [docs/ANALISE.md](docs/ANALISE.md).</sub>
+<sub>Feito com HTML, CSS e JavaScript puro, sem servidor: funciona offline como app instalado (PWA). Para publicar uma versão nova, aumente `CACHE` em `sw.js` e `APP_VERSION` em `app.js`. Uma faixa nova é só mais um objeto em `AGE_GROUPS` (pacote, níveis iniciais, contrastes e visual): a Sintonia inteira está em `sintonia.js`. A análise que guiou a versão 3 está em [docs/ANALISE.md](docs/ANALISE.md).</sub>
