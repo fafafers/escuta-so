@@ -2666,7 +2666,7 @@ Screens.game = {
       return;
     }
     // Par novo para esta criança: antes do jogo, "Conheça as palavras" com os pares novos.
-    if (def.usesPairs !== false && State.settings.familiarize !== false && ctx.pairs.length) {
+    if (def.usesPairs !== false && State.settings.familiarize !== false && !G.noFamiliarize && ctx.pairs.length) {
       const fam = await familiarSet(child.id);
       const fresh = ctx.pairs.filter(p => !fam.has(p.id));
       if (fresh.length && g.alive()) {
@@ -5903,6 +5903,9 @@ async function renderSettingsTab(el) {
   const famCb = h('input', { type: 'checkbox', checked: s.familiarize !== false });
   famCb.onchange = () => { s.familiarize = famCb.checked; save(); };
   const famToggle = h('label', { class: 'check' }, famCb, h('span', null, 'Mostrar'));
+  const accCb = h('input', { type: 'checkbox', checked: s.ignoreAccents !== false });
+  accCb.onchange = () => { s.ignoreAccents = accCb.checked; save(); };
+  const accToggle = h('label', { class: 'check' }, accCb, h('span', null, 'Ignorar'));
 
   /* Por faixa: tentativas por rodada e pacote padrão de atividades. */
   const groupBlocks = GROUP_ORDER.map(gid => {
@@ -5950,6 +5953,10 @@ async function renderSettingsTab(el) {
         h('p', { class: 'muted small' }, 'Volume das palavras e dos sons do jogo (o volume do aparelho também conta).')),
       h('div', { class: 'range-row' }, vol, volOut)),
     h('button', { class: 'btn small', type: 'button', onclick: test }, '🔊 Testar pausa e volume com um par'),
+    h('div', { class: 'setting' },
+      h('div', null, h('strong', null, 'Ditado de frases (Sintonia): ignorar acentos'),
+        h('p', { class: 'muted small' }, 'Ligado: “cafe” no lugar de “café” não conta como erro. O ç sempre conta.')),
+      accToggle),
     h('div', { class: 'setting' },
       h('div', null, h('strong', null, '“Conheça as palavras” antes de um par novo'),
         h('p', { class: 'muted small' }, 'Familiarização: antes do primeiro jogo com um par, o jogo mostra cada figura com o áudio, sem pontuação.')),
