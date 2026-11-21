@@ -5528,17 +5528,18 @@ function drawingsSection(ss) {
   ];
 }
 
-function exportCsv(sessions, base, nickOf) {
+async function exportCsv(sessions, base, nickOf) {
   const head = ['data', 'hora', 'crianca', 'faixa', 'atividade', 'sessao_completa', 'contraste', 'par_ou_item', 'tentativas', 'acertos', 'erros',
     'percentual_acerto', 'vezes_que_ouviu_de_novo', 'voz_sintetica', 'nivel_tipo', 'nivel_inicial', 'nivel_final', 'nivel_maximo', 'sequencia_max_certa', 'acertos_em_60s',
-    'nivel_atividade', 'degrau', 'posicao_do_som', 'producao', 'minutos_no_plano'];
+    'nivel_atividade', 'degrau', 'posicao_do_som', 'producao', 'minutos_no_plano', ...CSV_EXTRA_HEAD];
   const rows = [];
   for (const s of sessions.map(normSession).sort((a, b) => a.date.localeCompare(b.date))) {
     const d = new Date(s.date);
     const byItem = {};
     for (const t of s.trials) {
       const k = trialKey(t);
-      const p = byItem[k] || (byItem[k] = { contrast: t.contrast, words: trialLabel(t), hit: 0, tot: 0, replays: 0, tts: false, seq: null, lvl: new Set(), step: new Set(), pos: new Set(), prod: {} });
+      const p = byItem[k] || (byItem[k] = { contrast: t.contrast, words: trialLabel(t), hit: 0, tot: 0, replays: 0, tts: false, seq: null, lvl: new Set(), step: new Set(), pos: new Set(), prod: {}, trials: [] });
+      p.trials.push(t);
       if (t.lvl) p.lvl.add(t.lvl);
       const stp = t.step || stepOf(ACTIVITIES[s.mode], t.lvl);
       if (stp) p.step.add(stp);
@@ -5551,6 +5552,7 @@ function exportCsv(sessions, base, nickOf) {
     }
     const a = s.adaptive;
     const info = a && ADAPT_INFO[a.kind];
+    const thr = thresholdOf(s);
     for (const p of Object.values(byItem)) {
       rows.push([
         d.toLocaleDateString('pt-BR'), d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
@@ -5559,7 +5561,21 @@ function exportCsv(sessions, base, nickOf) {
         p.replays, p.tts ? 'sim' : 'não',
         info ? info.name : '', a ? a.start : '', a ? a.end : '', a ? a.max : '', p.seq || '', s.timed ? s.score || 0 : '',
         [...p.lvl].join('/'), [...p.step].join('/'), [...p.pos].join('/'), Object.entries(p.prod).map(([m, n]) => `${m}:${n}`).join(' '), s.minutes || '',
+        ...csvExtraFor(p.trials, s.mode), thr ? thr.label : '', '',
       ]);
+    }
+  }
+  // Questionário de autopercepção (Sintonia): uma linha por pergunta respondida.
+  for (const id of [...new Set(sessions.map(x => x.childId))]) {
+    for (const sv of await getSurveys(id)) {
+      const d = new Date(sv.date);
+      for (const q of SURVEY_QS) {
+        if (!sv.a[q.id]) continue;
+        const r = new Array(head.length).fill('');
+        Object.assign(r, { 0: d.toLocaleDateString('pt-BR'), 1: d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), 2: nickOf(id), 3: groupOf('sintonia').name, 4: 'Questionário de autopercepção', 5: 'sim', 7: q.text });
+        r[head.length - 1] = sv.a[q.id];
+        rows.push(r);
+      }
     }
   }
   const escCsv = v => {
@@ -5618,6 +5634,8 @@ async function renderProgressTab(el) {
 
     const ss = inGroup.filter(s => modeF === 'all' || s.mode === modeF).sort((a, b) => a.date.localeCompare(b.date));
     body.replaceChildren();
+    const surveyBox = h('div');           // questionário (Sintonia): é por adolescente, não por sessão
+    if (modeF === 'all') surveySection(childId).then(x => { if (x) add(surveyBox, x); });
     if (!ss.length) { body.append(h('p', { class: 'empty' }, 'Nenhuma sessão com esse filtro.')); return; }
     const trials = ss.flatMap(s => s.trials);
     const cTrials = trials.filter(t => CONTRASTS[t.contrast]);
@@ -5720,6 +5738,10 @@ async function renderProgressTab(el) {
       levelSection(ss),
       productionSection(ss),
       drawingsSection(ss),
+      swapSection(ss),
+      thresholdSection(ss),
+      earSection(ss),
+      surveyBox,
       modeF !== 'all' && sums[0] && summaryDetail(sums[0]) && h('p', { class: 'level-summary' }, h('strong', null, summaryDetail(sums[0]))),
       itemTable && h('h3', null, modeF === 'all' ? 'Acerto por par em cada atividade' : 'Acerto por par / item'),
       itemTable && h('div', { class: 'table-wrap' }, itemTable),

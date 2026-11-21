@@ -2250,7 +2250,220 @@ async function importHomeworkFile(file, kids, done) {
   done();
 }
 
-/* @@PART6@@ */
+/* =========================================================================
+ * 5g. ÁREA DA FONO: CLASSIFICAÇÃO DOS ERROS, LIMIARES, OUVIDOS E QUESTIONÁRIO
+ * Vale para todas as faixas (as atividades antigas também são classificadas quando dá).
+ * ========================================================================= */
+const CHANNELS = { ouvir: '👂 Ouvir', ler: '📖 Ler', escrever: '✍️ Escrever' };
+const CHANNEL_OF = { hidden: 'escrever', dictation: 'escrever', secret: 'escrever', letter: 'ler', silly: 'ler', position: 'ler' };
+const channelOf = (mode, t) => (t && t.channel) || (ACTIVITIES[mode] && ACTIVITIES[mode].channel) || CHANNEL_OF[mode] || 'ouvir';
+/* Atividades antigas em que esperado × resposta são palavras (ou a letra que muda): dá para deduzir a troca. */
+const DERIVE_SWAPS = new Set(['which', 'drag', 'hidden', 'dictation', 'silly', 'intruder', 'noise', 'chopped', 'blitz']);
+/** Trocas de sonoridade de uma tentativa errada: as gravadas (Sintonia) ou deduzidas de esperado × resposta. */
+function trialSwaps(t, mode) {
+  if (t.sw) return { swaps: t.sw.swaps || [], other: !!t.sw.other };
+  if (t.correct || !DERIVE_SWAPS.has(mode) || typeof t.expected !== 'string' || typeof t.answer !== 'string') return { swaps: [], other: false };
+  const r = { swaps: swapRecords(t.expected, t.answer).swaps, other: false };
+  const pp = t.pairId && Bank.get(t.pairId);
+  const pos = t.pos || (pp ? pairPos(pp) : null);
+  // Letra sozinha (Letra escondida: F × V): a posição vem do par.
+  if (pos && [...t.expected].length <= 2) r.swaps = r.swaps.map(x => ({ ...x, pos }));
+  return r;
+}
+function swapEntries(ss) {
+  const out = [];
+  let other = 0;
+  for (const s of ss) for (const t of s.trials) {
+    const r = trialSwaps(t, s.mode);
+    if (r.other && !r.swaps.length) other++;
+    r.swaps.forEach(x => out.push({ ...x, contrast: x.contrast || PHON_CONTRAST[x.from], channel: channelOf(s.mode, t), mode: s.mode, date: s.date }));
+  }
+  return { list: out, other };
+}
+function swapSection(ss) {
+  const { list, other } = swapEntries(ss);
+  if (!list.length) return null;
+  const kinds = ['sonorizacao', 'dessonorizacao'];
+  const row = (label, es) => h('tr', null, h('td', null, label), kinds.map(k => h('td', { class: 'num' }, es.filter(e => e.kind === k).length || '—')), h('td', { class: 'num' }, es.length));
+  const head = first => h('thead', null, h('tr', null, h('th', null, first), h('th', { class: 'num', title: 'surda → sonora (faca → vaca)' }, 'Sonorização'), h('th', { class: 'num', title: 'sonora → surda (vaca → faca)' }, 'Dessonorização'), h('th', { class: 'num' }, 'Total')));
+  const cs = CONTRAST_ORDER.filter(c => list.some(e => e.contrast === c));
+  const nS = list.filter(e => e.kind === 'sonorizacao').length;
+  const nD = list.length - nS;
+  const lean = nS > nD * 1.5 ? 'A maior parte é SONORIZAÇÃO: o som sem vibração (surdo) vira o que vibra (faca → vaca).'
+    : nD > nS * 1.5 ? 'A maior parte é DESSONORIZAÇÃO: o som que vibra (sonoro) vira o sem vibração (vaca → faca).' : 'Sonorização e dessonorização aparecem em quantidade parecida.';
+  return [
+    h('h3', null, 'Tipo de troca: sonorização × dessonorização'),
+    h('p', { class: 'muted small' }, `Erros em que um som foi trocado pelo seu par. Sonorização = esperava o surdo e veio o sonoro (faca → vaca); dessonorização = o contrário. ${lean}` + (other ? ` Outros erros que não são troca de sonoridade: ${other}.` : '')),
+    h('div', { class: 'swap-tables' },
+      h('div', { class: 'table-wrap' }, h('table', { class: 'data' }, head('Par'), h('tbody', null, row(h('strong', null, 'Todos'), list), cs.map(c => row(contrastChip(c), list.filter(e => e.contrast === c)))))),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'data' }, head('Posição'), h('tbody', null, POS_ORDER.filter(p => list.some(e => e.pos === p)).map(p => row(POS_LABEL[p], list.filter(e => e.pos === p)))))),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'data' }, head('Atividade de…'), h('tbody', null, Object.keys(CHANNELS).filter(c => list.some(e => e.channel === c)).map(c => row(CHANNELS[c], list.filter(e => e.channel === c))))))),
+  ];
+}
+
+/* ---------- limiares das atividades adaptativas ---------- */
+/** Gráfico de linhas com eixo de valores (dB, ms, ×, itens, escala 1–5). */
+function valueChart(series, labels, { min, max, ticks, fmt = v => String(v), invert = false, aria = '' }) {
+  const W = 640;
+  const H = 240;
+  const L = 58;
+  const R = 16;
+  const T = 14;
+  const B = 34;
+  const n = labels.length;
+  const x = i => (n === 1 ? (L + W - R) / 2 : L + (i * (W - L - R)) / (n - 1));
+  const f = v => (v - min) / (max - min || 1);
+  const y = v => T + (invert ? f(v) : 1 - f(v)) * (H - T - B);
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria)}">`;
+  for (const v of ticks) s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${esc(fmt(v))}</text>`;
+  const step = Math.ceil(n / 8);
+  labels.forEach((lab, i) => { if (i % step === 0) s += `<text class="axis" x="${x(i)}" y="${H - 10}" text-anchor="middle">${esc(lab)}</text>`; });
+  for (const se of series) {
+    let d = '';
+    se.values.forEach((v, i) => { if (v != null) d += `${d ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)} `; });
+    s += `<path d="${d}" fill="none" stroke="${se.color}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+    se.values.forEach((v, i) => { if (v != null) s += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="5" fill="#fff" stroke="${se.color}" stroke-width="3"><title>${esc(se.name)}: ${esc(fmt(v))} (${esc(labels[i])})</title></circle>`; });
+  }
+  return s + '</svg>';
+}
+const THR_INFO = {
+  snr: { title: 'Ruído (relação fala × ruído)', fmt: v => fmtDb(v), better: 'low', note: 'quanto menor, mais ruído ele aguenta' },
+  rate: { title: 'Velocidade da fala', fmt: v => fmtRate(v), better: 'high', note: 'quanto maior, mais rápido ele entende' },
+  gap: { title: 'Menor pausa percebida', fmt: v => v + ' ms', better: 'low', note: 'quanto menor, melhor a resolução temporal' },
+  seq: { title: 'Tamanho da sequência', fmt: v => String(v), better: 'high', note: 'quanto maior, melhor' },
+};
+function thresholdSection(ss) {
+  const pts = ss.filter(s => s.complete).map(s => ({ s, thr: thresholdOf(s) })).filter(x => x.thr);
+  if (!pts.length) return null;
+  const modes = [...new Set(pts.map(x => x.s.mode))];
+  const blocks = modes.map(m => {
+    const ps = pts.filter(x => x.s.mode === m);
+    const info = THR_INFO[ps[0].thr.kind];
+    const vals = ps.map(x => x.thr.value);
+    const best = info.better === 'low' ? Math.min(...vals) : Math.max(...vals);
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const pad = (hi - lo) * 0.15 || (info.better === 'low' ? 2 : 0.5);
+    const min = Math.floor((lo - pad) * 10) / 10;
+    const max = Math.ceil((hi + pad) * 10) / 10;
+    const ticks = [min, (min + max) / 2, max].map(v => Math.round(v * 100) / 100);
+    const color = ACTIVITIES[m] && ACTIVITIES[m].channel === 'ouvir' ? '#6c5ce7' : '#2a9d8f';
+    return h('div', { class: 'thr-block' },
+      h('h4', null, `${ACTIVITIES[m] ? ACTIVITIES[m].icon + ' ' + ACTIVITIES[m].name : m} · ${info.title}`),
+      h('p', { class: 'small' }, `Melhor: `, h('strong', null, info.fmt(best)), ` · última sessão: ${info.fmt(vals[vals.length - 1])} · ${info.note}.`),
+      ps.length > 1 && h('div', { class: 'chart-box', html: valueChart([{ name: info.title, color, values: vals }], ps.map(x => fmtShortDate(x.s.date)), { min, max, ticks, fmt: info.fmt, invert: info.better === 'low', aria: info.title }) }));
+  });
+  return [h('h3', null, 'Limiares alcançados (atividades adaptativas)'), h('p', { class: 'muted small' }, 'Limiar de cada sessão = o nível mais difícil em que ele acertou. Nos gráficos, para cima é sempre melhor.'), blocks];
+}
+
+/* ---------- acertos por ouvido (Atenção dirigida e Fone de ouvido) ---------- */
+function earSection(ss) {
+  const ts = ss.flatMap(s => s.trials).filter(t => t.correctLeft != null || t.correctRight != null);
+  if (!ts.length) return null;
+  const side = (k, f = () => true) => { const es = ts.filter(t => t[k] != null && f(t)); return { hit: es.filter(t => t[k]).length, tot: es.length }; };
+  const ASK = { left: 'Só o esquerdo', right: 'Só o direito', both: 'Os dois' };
+  const L = side('correctLeft');
+  const R = side('correctRight');
+  const diff = L.tot && R.tot ? pct(R.hit, R.tot) - pct(L.hit, L.tot) : null;
+  return [
+    h('h3', null, '🎧 Acertos por ouvido'),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Instrução'), h('th', { class: 'num' }, 'Ouvido esquerdo'), h('th', { class: 'num' }, 'Ouvido direito'))),
+      h('tbody', null,
+        h('tr', null, h('td', null, h('strong', null, 'Todas')), h('td', { class: 'num' }, L.tot ? [pctCell(L), h('span', { class: 'muted small' }, ` (${L.tot})`)] : '—'), h('td', { class: 'num' }, R.tot ? [pctCell(R), h('span', { class: 'muted small' }, ` (${R.tot})`)] : '—')),
+        Object.keys(ASK).filter(a => ts.some(t => t.ask === a)).map(a => {
+          const l = side('correctLeft', t => t.ask === a);
+          const r = side('correctRight', t => t.ask === a);
+          return h('tr', null, h('td', null, ASK[a]), h('td', { class: 'num' }, l.tot ? pctCell(l) : '—'), h('td', { class: 'num' }, r.tot ? pctCell(r) : '—'));
+        })))),
+    diff != null && h('p', { class: 'muted small' }, diff > 10 ? `Vantagem do ouvido direito: ${diff} pontos.` : diff < -10 ? `Vantagem do ouvido esquerdo: ${-diff} pontos.` : 'Os dois ouvidos estão parecidos.'),
+  ];
+}
+
+/* ---------- questionário de autopercepção (uma vez por mês) ----------
+ * Perguntas próprias do jogo (não é um protocolo publicado). Escala de 1 (muito fácil) a 5 (muito difícil).
+ * kv "survey:<criança>" = [{ date, a: { sala: 1–5, … } }] */
+const SURVEY_QS = [
+  { id: 'sala', text: 'Entender o que o professor explica na sala de aula', short: 'Sala de aula' },
+  { id: 'barulho', text: 'Entender alguém quando tem barulho em volta (recreio, cantina, ônibus)', short: 'No barulho' },
+  { id: 'rapida', text: 'Acompanhar quando a pessoa fala rápido (vídeos, áudios, conversas)', short: 'Fala rápida' },
+  { id: 'escrever', text: 'Escrever as palavras sem trocar letras (F/V, T/D, P/B…)', short: 'Escrever' },
+  { id: 'anotar', text: 'Anotar ou copiar enquanto o professor fala', short: 'Anotar' },
+  { id: 'instrucao', text: 'Lembrar de instruções com várias partes', short: 'Instruções' },
+];
+const SURVEY_COLORS = ['#6c5ce7', '#e76f51', '#2a9d8f', '#e9a23b', '#3a86ff', '#d6336c'];
+const SURVEY_SCALE = ['', 'Muito fácil', 'Fácil', 'Mais ou menos', 'Difícil', 'Muito difícil'];
+const getSurveys = childId => DB.kv('survey:' + childId, []);
+async function surveyIsDue(childId) {
+  const list = await getSurveys(childId);
+  return !list.length || daysSince(list[list.length - 1].date) >= 30;
+}
+Screens.teenSurvey = {
+  themed: true,
+  async render(app) {
+    const child = State.child || GUEST;
+    const ans = {};
+    const save = h('button', { class: 'btn primary big', type: 'button', disabled: true }, 'Salvar respostas');
+    const rows = SURVEY_QS.map(q => {
+      const btns = [1, 2, 3, 4, 5].map(v => h('button', { class: 'sv-btn', type: 'button', title: SURVEY_SCALE[v], 'aria-label': `${v}: ${SURVEY_SCALE[v]}` }, String(v)));
+      btns.forEach((b, i) => { b.onclick = () => { ans[q.id] = i + 1; btns.forEach((x, k) => x.classList.toggle('on', k === i)); save.disabled = SURVEY_QS.some(x => !ans[x.id]); }; });
+      return h('div', { class: 'sv-row' }, h('p', { class: 'sv-q' }, q.text), h('div', { class: 'sv-scale' }, btns));
+    });
+    save.onclick = async () => {
+      if (child.id !== GUEST.id) {
+        const list = await getSurveys(child.id);
+        list.push({ date: new Date().toISOString(), a: ans });
+        await DB.setKv('survey:' + child.id, list);
+      }
+      toast('Valeu! Suas respostas ajudam a fono a acompanhar você.');
+      go('menu');
+    };
+    add(app, [
+      h('div', { class: 'topbar' }, iconBtn('←', 'Voltar', () => go('menu')), h('h1', { class: 'teen-h1' }, 'Como anda a sua escuta?'), h('div', { class: 'spacer' })),
+      h('div', { class: 'teen-stats sv-wrap' },
+        h('p', { class: 'muted' }, 'Neste mês, quanto foi difícil para você… (1 = muito fácil, 5 = muito difícil). Não tem resposta certa.'),
+        h('div', { class: 'sv-legend' }, [1, 2, 3, 4, 5].map(v => h('span', null, `${v} ${SURVEY_SCALE[v]}`))),
+        rows, save),
+    ]);
+  },
+};
+async function surveySection(childId) {
+  const list = await getSurveys(childId);
+  if (!list.length) return null;
+  const labels = list.map(x => fmtShortDate(x.date));
+  const series = SURVEY_QS.map((q, i) => ({ name: q.short, color: SURVEY_COLORS[i], values: list.map(x => x.a[q.id] || null) }));
+  const last = list[list.length - 1];
+  return [
+    h('h3', null, '📋 Questionário de autopercepção'),
+    h('p', { class: 'muted small' }, 'Respondido pelo adolescente uma vez por mês (no menu da Sintonia). 1 = muito fácil, 5 = muito difícil: no gráfico, para cima é melhor (menos dificuldade).'),
+    list.length > 1 && h('div', { class: 'chart-box', html: valueChart(series, labels, { min: 1, max: 5, ticks: [1, 2, 3, 4, 5], invert: true, fmt: v => String(v), aria: 'Questionário de autopercepção' }) }),
+    list.length > 1 && h('div', { class: 'legend' }, series.map(se => h('span', { class: 'legend-item' }, h('span', { class: 'legend-dot', style: `background:${se.color}` }), se.name))),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', null, 'Pergunta'), list.slice(-4).map(x => h('th', { class: 'num' }, fmtShortDate(x.date))))),
+      h('tbody', null, SURVEY_QS.map(q => h('tr', null, h('td', null, q.text), list.slice(-4).map(x => h('td', { class: 'num', title: SURVEY_SCALE[x.a[q.id]] || '' }, x.a[q.id] || '—'))))))),
+    h('p', { class: 'muted small' }, `Última resposta: ${fmtDate(last.date)}.`),
+  ];
+}
+/** Colunas extras do CSV para uma tentativa (classificação, canal, limiar e ouvidos). */
+function csvExtraFor(trials, mode) {
+  let son = 0;
+  let des = 0;
+  let oth = 0;
+  for (const t of trials) {
+    const r = trialSwaps(t, mode);
+    son += r.swaps.filter(x => x.kind === 'sonorizacao').length;
+    des += r.swaps.filter(x => x.kind === 'dessonorizacao').length;
+    if (r.other && !r.swaps.length) oth++;
+  }
+  const L = trials.filter(t => t.correctLeft != null);
+  const R = trials.filter(t => t.correctRight != null);
+  return [
+    [...new Set(trials.map(t => channelOf(mode, t)))].join('/'), son || '', des || '', oth || '',
+    L.length ? `${L.filter(t => t.correctLeft).length}/${L.length}` : '', R.length ? `${R.length && R.filter(t => t.correctRight).length}/${R.length}` : '',
+  ];
+}
+const CSV_EXTRA_HEAD = ['canal', 'sonorizacao', 'dessonorizacao', 'outros_erros', 'ouvido_esquerdo', 'ouvido_direito', 'limiar_da_sessao', 'resposta_questionario'];
+
 
 
 

@@ -1911,7 +1911,20 @@ table.ladder td, table.ladder th { text-align: center; padding: 6px 8px; }
 .hw-out { margin-top: 14px; }
 .qr-box { display: inline-block; padding: 10px; background: #fff; border-radius: 12px; border: 1px solid var(--line); }
 .qr-box svg { display: block; max-width: min(420px, 80vw); height: auto; }
+/* área da fono: classificação, limiares e questionário */
+.swap-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 12px; }
+.thr-block h4 { margin: 14px 0 4px; }
+.thr-block p { margin: 0 0 6px; }
+.sv-wrap { display: flex; flex-direction: column; gap: 12px; max-width: 860px; margin: 0 auto; width: 100%; }
+.sv-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; color: var(--muted); }
+.sv-row { padding: 12px 14px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); }
+.sv-q { margin: 0 0 8px; font-weight: 700; }
+.sv-scale { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.sv-btn { min-height: 52px; border-radius: 12px; border: 2px solid var(--line); background: var(--bg); color: var(--ink); font-size: 22px; font-weight: 800; }
+.sv-btn.on { background: var(--accent, var(--blue)); border-color: var(--accent, var(--blue)); color: #fff; }
+.sv-wrap .btn.big { align-self: center; }
 /* @@TEENCSS@@ */
+
 
 
 
