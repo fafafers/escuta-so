@@ -8,6 +8,8 @@
  *       · 3d sons sozinhos, letras e posição do som · 3e escada, níveis, familiarização e produção
  *       · 3f plano de sessão
  *   4.  Área da fono: rodada, plano, gravação, listas, crianças, evolução, backup e ajustes
+ *   5.  Faixa Sintonia (12 a 15 anos): fica em sintonia.js (atividades, conquistas, tarefa de casa,
+ *       classificação dos erros, limiares e questionário)
  */
 'use strict';
 
@@ -71,6 +73,7 @@ const DEFAULT_SETTINGS = {
   trialsBy: {},           // tentativas por rodada, por faixa (vazio = padrão da faixa)
   packs: {},              // pacote padrão de atividades por faixa: { faixa: { atividade: true/false } }
   noiseType: 'mix',       // ruído do "Ruído na escuta": mix | babble | rain | party
+  ignoreAccents: true,    // Ditado de frases (Sintonia): acento errado não conta como erro
 };
 
 /* ---------- faixas etárias ----------
@@ -174,7 +177,9 @@ async function go(name, params = {}) {
   app.replaceChildren();
   app.dataset.screen = name;
   // Telas da criança usam o visual da faixa escolhida; as outras, o visual neutro.
-  document.documentElement.dataset.theme = Screens[name] && Screens[name].themed ? groupOf(State.group).theme : 'neutral';
+  const themed = Screens[name] && Screens[name].themed;
+  document.documentElement.dataset.theme = themed ? groupOf(State.group).theme : 'neutral';
+  document.documentElement.dataset.variant = themed && groupOf(State.group).variant ? groupOf(State.group).variant() : '';
   currentScreen = name;
   window.scrollTo(0, 0);
   try {
@@ -371,6 +376,7 @@ Screens.start = {
   },
 };
 function groupArt(G) {
+  if (G.art) return G.art();
   if (G.theme === 'explorer') return '<span class="group-emojis">✏️<b>A</b>🔎</span>';
   if (G.theme === 'agent') {
     return '<svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="50" cy="50" r="30" fill="none" stroke="#5ef2d6" stroke-width="9"/>'
@@ -594,7 +600,7 @@ const DETECTIVE_PAIRS = [
   ['fv', 'faca', '🔪', 'vaca', '🐄'], ['fv', 'fila', '', 'vila', '🏘️'], ['fv', 'foto', '📷', 'voto', '🗳️'],
   ['fv', 'fala', '🗣️', 'vala', ''], ['fv', 'feio', '👹', 'veio', ''], ['fv', 'fé', '🙏', 'vê', '👀'],
 ];
-const SEED_VERSION = 4;
+const SEED_VERSION = 5;
 /* Pseudopalavras (fonotática do PB, sem significado): tiram a pista do sentido no nível mais alto. */
 const PSEUDO_PAIRS = [['td', 'tafo', 'dafo'], ['td', 'tobi', 'dobi'], ['kg', 'cupi', 'gupi'], ['fv', 'fapo', 'vapo'], ['fv', 'fema', 'vema'], ['pb', 'pafi', 'bafi']];
 const sameText = (x, y) => x.trim().toLowerCase() === y.trim().toLowerCase();
@@ -654,6 +660,10 @@ const Bank = {
       pairs.push(p);
       changed.add(p);
     });
+    if (ver < 5 && AGE_GROUPS.sintonia) {
+      // Faixa nova (12–15 anos): todos os pares (inclusive as pseudopalavras) valem para ela também.
+      pairs.forEach(x => { if (!x.groups.includes('sintonia')) { x.groups = [...x.groups, 'sintonia']; changed.add(x); } });
+    }
     await DB.write(['pairs', 'kv'], t => {
       changed.forEach(p => t.objectStore('pairs').put(p));
       t.objectStore('kv').put({ key: 'seeded', value: true });
@@ -2466,11 +2476,13 @@ function renderUnavailable(app, msg) {
  * Escada simples: sobe um nível depois de `up` acertos seguidos e desce depois de
  * `down` erros seguidos. O nível fica salvo por criança e atividade para a próxima sessão. */
 const Adaptive = {
-  async load(childId, def) {
+  async load(childId, def, G = null) {
     const A = def.adaptive;
     const key = `adapt:${childId}:${def.id}`;
     const saved = A.persist === false ? null : await DB.kv(key, null);
-    const level = clamp(saved ? saved.level - (A.warmup || 0) : A.start, A.min, A.max);
+    // Faixas que começam no alto (Sintonia): primeira vez num nível alto, sem ser o máximo.
+    const first = G && G.startTop ? (A.teenStart != null ? A.teenStart : Math.max(A.start, Math.ceil((A.min + A.max) / 2))) : A.start;
+    const level = clamp(saved ? saved.level - (A.warmup || 0) : first, A.min, A.max);
     return {
       level,
       run: 0,
@@ -2517,7 +2529,7 @@ Screens.game = {
     const problem = def.check ? def.check(ctx) : null;
     if (problem) { renderUnavailable(app, problem); return; }
 
-    const adapt = def.adaptive ? await Adaptive.load(child.id, def) : null;
+    const adapt = def.adaptive ? await Adaptive.load(child.id, def, G) : null;
     const lv = await Levels.get(child.id, def, G);
     if (!alive()) return;
     ctx.adapt = adapt;
@@ -2551,6 +2563,10 @@ Screens.game = {
     const progress = timed ? h('div', { class: 'time-box', 'aria-label': 'Tempo' }, h('span', { class: 'time-bar' }, timeFill), scoreEl) : dots;
     const ttsBadge = h('span', { class: 'tts-badge', hidden: true, title: 'Palavra sem gravação: tocando a voz sintética do aparelho, que é menos precisa.' }, 'voz sintética');
     const levelChip = h('span', { class: 'level-chip', hidden: !adapt && !lv.max }, !adapt && lv.max ? `Nível ${lv.level}` : '');
+    // Cronômetro opcional (Sintonia): conta o tempo da rodada, nunca corta a resposta.
+    const watch = !timed && !minutes && G.stopwatch && G.stopwatch() && !def.noWatch ? { el: h('span', { class: 'stopwatch', title: 'Cronômetro (desafio opcional)' }, '⏱ 0:00'), t0: 0, iv: 0 } : null;
+    const fmtWatch = sec => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    if (watch) onLeave(() => clearInterval(watch.iv));
     const replayBtn = h('button', { class: 'btn-replay', type: 'button', 'aria-label': 'Ouvir de novo', title: 'Ouvir de novo', html: SPEAKER_SVG });
     const stage = h('div', { class: 'stage stage-' + def.id });
     add(app, [
@@ -2558,7 +2574,7 @@ Screens.game = {
         h('div', { class: 'game-top-side' }, iconBtn('🏠', 'Sair do jogo', askExit),
           h('span', { class: 'game-title' }, def.name), ttsBadge),
         replayBtn,
-        h('div', { class: 'game-top-side end' }, levelChip, progress)),
+        h('div', { class: 'game-top-side end' }, watch && watch.el, levelChip, progress)),
       stage,
     ]);
 
@@ -2667,6 +2683,10 @@ Screens.game = {
       if (!g.alive()) return;
       if (timer && i === 0) timer.start();
       if (minutes && i === 0) deadline = Date.now() + minutes * 60000;
+      if (watch && i === 0) {
+        watch.t0 = Date.now();
+        watch.iv = setInterval(() => { watch.el.textContent = '⏱ ' + fmtWatch(Math.round((Date.now() - watch.t0) / 1000)); }, 500);
+      }
       if (g.timeUp()) break;
       if (dots) dots.children[i].classList.add('current');
       g.tts = false;
@@ -2693,6 +2713,7 @@ Screens.game = {
       if (deadline && Date.now() >= deadline) break;
     }
     if (timer) timer.stop();
+    if (watch) { clearInterval(watch.iv); session.seconds = Math.round((Date.now() - watch.t0) / 1000); session.stopwatch = true; }
     if (def.afterRound && session.trials.length && g.alive()) {      // ex.: revelação das letras (Vibra ou sopra?)
       await def.afterRound(g, session);
       if (!g.alive()) return;
@@ -2880,6 +2901,7 @@ function wordBtn(pair, side, cls = '') {
 
 /** Correção dos Detetives: mostra as duas formas lado a lado (letra que muda destacada) e toca as duas. */
 async function showCompare(g, pair, right, note = '') {
+  if (!note && g.G && g.G.explain && typeof swapNote === 'function') note = swapNote(pair[right].text, pair[other(right)].text);
   await sleep(350);
   if (!g.alive()) return;
   const card = side => h('div', { class: 'cmp-card' },
@@ -4157,9 +4179,11 @@ const LADDER = [
   { step: 6, name: 'Frases', short: 'Frases' },
   { step: 7, name: 'Escrita', short: 'Escrita' },
   { step: 8, name: 'Ruído, filtro e sequência', short: 'Ruído e seq.' },
+  { step: 9, name: 'Compreensão no ruído (textos)', short: 'Compreensão' },
 ];
 const stepOf = (def, lvl) => (def && def.stepFor ? def.stepFor(lvl || 1) : (def && def.step) || null);
-const accOf = s => (s.trials.length ? s.trials.filter(t => t.correct).length / s.trials.length : 0);
+const trialScore = t => (typeof t.score === 'number' ? t.score : t.correct ? 1 : 0);
+const accOf = s => (s.trials.length ? s.trials.reduce((n, t) => n + trialScore(t), 0) / s.trials.length : 0);
 const LEVEL_UP = 0.8;     // sobe com 80% ou mais em 2 rodadas seguidas
 const LEVEL_DOWN = 0.5;   // volta com menos de 50%
 
@@ -4170,7 +4194,7 @@ const Levels = {
     const max = def.levels ? def.levels.length : 0;
     if (!max) return { level: null, locked: false, max: 0 };
     const saved = await DB.kv(this.key(childId, def.id), null);
-    const start = (G && G.startLevels && G.startLevels[def.id]) || 1;
+    const start = G && G.startTop ? max : (G && G.startLevels && G.startLevels[def.id]) || 1;
     return { level: clamp(saved ? saved.level : start, 1, max), locked: !!(saved && saved.locked), max };
   },
   set(childId, aid, level, locked) { return DB.setKv(this.key(childId, aid), { level, locked: !!locked, date: new Date().toISOString() }); },
@@ -4230,6 +4254,8 @@ async function familiarizeScreen(g, pairs) {
 /** Para cada contraste: % por degrau, degraus dominados e o degrau atual (ou travado pela fono). */
 async function ladderStatus(childId, contrasts) {
   const ss = (await sessionsOf(childId)).filter(s => s.complete);
+  const kid = childId === GUEST.id ? null : await DB.get('children', childId);
+  const top = !!(kid && groupOf(kidGroup(normKid(kid))).startTop);
   const locks = await DB.kv('ladder:' + childId, {});
   const fam = await familiarSet(childId);
   const out = {};
@@ -4250,6 +4276,7 @@ async function ladderStatus(childId, contrasts) {
         st.hit += hit;
         if (ts.length < 3) continue;           // pouco para decidir
         const r = hit / ts.length;
+        st.lastRate = r;
         if (r >= LEVEL_UP && st.lastOk) st.mastered = true;
         else if (r < LEVEL_DOWN) st.mastered = false;
         st.lastOk = r >= LEVEL_UP;
@@ -4258,7 +4285,10 @@ async function ladderStatus(childId, contrasts) {
     steps[0].mastered = steps[0].mastered || Bank.pairs.some(p => p.contrast === c && fam.has(p.id));
     const firstOpen = steps.findIndex(st => !st.mastered);
     const lock = locks[c] && locks[c].step ? locks[c].step : null;
-    out[c] = { steps, current: lock || (firstOpen < 0 ? LADDER.length : firstOpen + 1), locked: !!lock };
+    // Sintonia começa no degrau mais alto e só desce para um degrau em que foi mal (menos de 50%).
+    const weak = steps.find(st => st.lastRate != null && st.lastRate < LEVEL_DOWN && !st.mastered);
+    const auto = top ? (weak ? weak.step : LADDER.length) : (firstOpen < 0 ? LADDER.length : firstOpen + 1);
+    out[c] = { steps, current: lock || auto, locked: !!lock };
   }
   return out;
 }
@@ -4437,7 +4467,7 @@ function runPlanStep() {
 async function planTemplate(child) {
   const gid = kidGroup(child);
   const G = groupOf(gid);
-  const warm = { pequenos: 'sounds', exploradores: 'voicing', detetives: 'hidden' }[gid] || G.activities.find(id => ACTIVITIES[id] && !ACTIVITIES[id].free);
+  const warm = { pequenos: 'sounds', exploradores: 'voicing', detetives: 'hidden', sintonia: 'pseudo' }[gid] || G.activities.find(id => ACTIVITIES[id] && !ACTIVITIES[id].free);
   const ids = new Set(await roundPairIds(child.id, gid));
   const pairs = Bank.pairs.filter(p => ids.has(p.id));
   const cs = [...new Set(pairs.map(p => p.contrast))].filter(c => CONTRAST_PHON[c]);

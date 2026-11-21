@@ -10,6 +10,7 @@ const ASSETS = [
   './index.html',
   './styles.css',
   './app.js',
+  './sintonia.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-192.png',
