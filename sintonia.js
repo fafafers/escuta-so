@@ -408,4 +408,238 @@ Screens.teenStats = {
   },
 };
 
-/* @@PART2@@ */
+/* =========================================================================
+ * 5c. BANCO DE CONTEÚDO DA SINTONIA (listas editáveis em Área da fono → Listas)
+ * Tudo em português do Brasil e conferido pelo SOM (c/qu, g/gu, ç, s entre vogais = /z/).
+ * ========================================================================= */
+const MAIN_PHONS = ['p', 'b', 't', 'd', 'f', 'v', 'k', 'g'];          // pares T/D, K/G, F/V, P/B
+const OPT_PHONS = ['s', 'z', 'x', 'j'];                               // S/Z e CH/J (opcionais)
+const SUBJECTS = [['ciencias', 'Ciências'], ['geografia', 'Geografia'], ['historia', 'História'], ['matematica', 'Matemática'], ['portugues', 'Português']];
+const subjectName = id => (SUBJECTS.find(([k]) => k === id) || [id, id])[1];
+const SCHOOL_WORDS = {
+  ciencias: 'fotossíntese vertebrado invertebrado temperatura digestão bactéria vacina gravidade proteína vitamina vegetal ecossistema planeta fóssil tecido combustível',
+  geografia: 'vegetação latitude longitude população território cartografia agricultura continente densidade planalto hidrografia fronteira tropical desmatamento',
+  historia: 'independência democracia ditadura república império escravidão revolução colônia abolição batalha tratado parlamento governo constituição bandeirantes',
+  matematica: 'divisão fração porcentagem diâmetro decimal potência tabuada gráfico triângulo retângulo perímetro divisor dobro metade',
+  portugues: 'gramática advérbio verbo predicado adjetivo substantivo pronome vírgula parágrafo ditongo preposição artigo pontuação concordância',
+};
+/* Famílias de palavras: o som da raiz (phon) se mantém em todas. */
+const FAMILY_SETS = [
+  ['f', 'foto, fotografia, fotógrafo, fotográfico'], ['v', 'verde, verdura, esverdeado, verdejante'], ['v', 'cativo, cativeiro, cativante, cativar'],
+  ['g', 'gato, gatinho, gatuno, gataria'], ['d', 'dente, dentista, dentadura, dental'], ['b', 'barco, barqueiro, embarcar, embarcação'],
+  ['p', 'pedra, pedreiro, pedregulho, apedrejar'], ['k', 'casa, casinha, casarão, caseiro'], ['g', 'gosto, gostoso, gostar, desgosto'],
+  ['f', 'ferro, ferreiro, ferrugem, ferradura'], ['v', 'vento, ventania, ventilador, ventilar'], ['t', 'terra, terreno, terreiro, enterrar'],
+  ['d', 'doce, docinho, adoçar, doceria'], ['p', 'peixe, peixinho, peixaria, peixeiro'], ['b', 'bola, bolinha, bolada, boleiro'],
+  ['t', 'tempo, temporal, temporada, passatempo'], ['v', 'vegetal, vegetação, vegetariano, vegetar'], ['d', 'divisão, dividir, divisível, dividendo'],
+  ['f', 'fração, fracionar, fracionário'], ['p', 'povo, população, popular, povoado'], ['k', 'cozinha, cozinheiro, cozinhar, cozido'],
+  ['j', 'jogo, jogador, jogada, jogar'], ['x', 'chuva, chuvoso, chuvisco, chuveiro'], ['j', 'gelo, gelado, geladeira, congelar'],
+];
+/* Pseudopalavras prontas (sílabas CV possíveis no PB, sem sentido); o jogo também gera novas pela mesma regra. */
+const PSEUDO_WORDS = 'tadefo vupeca gofita dabuco fepiga bodaque catuvo gavite pafude dofega tibova vecado bugafe cotipa fagude pevico guedopa tabevo dicufa bafote cupedo voguita fuvega detiba gapodo tefuba bovite quepado digovo'.split(' ');
+const PHRASES = [
+  'A vaca bebeu água no balde.', 'O gato dormiu debaixo da cama.', 'Vou tomar café com pão de queijo.', 'Meu pai comprou uma bicicleta nova.',
+  'Faltou luz e todo mundo ficou no escuro.', 'Depois da aula vamos treinar vôlei.', 'O resultado da prova sai na sexta-feira.', 'Guarde o celular na mochila antes da prova.',
+  'A professora pediu o trabalho de geografia para terça.', 'O time de futebol ganhou o campeonato da escola.', 'Choveu tanto que a festa da turma foi adiada.',
+  'A fotografia ficou desfocada porque eu tremi.', 'Precisamos dividir a pizza em oito pedaços iguais.', 'A biblioteca fecha mais cedo aos sábados.',
+  'O vento forte derrubou a placa da padaria.', 'A bateria do meu fone acabou no meio da música.', 'O goleiro defendeu o pênalti no último minuto.',
+  'Ela gravou um vídeo engraçado com o cachorro.', 'Dobre a folha ao meio e corte na linha pontilhada.', 'O volume da televisão estava alto demais.',
+  'A gente combinou de estudar juntos na terça depois do almoço.', 'O ônibus atrasou e eu cheguei depois que o portão fechou.',
+  'Amanhã tem simulado de matemática logo no primeiro horário.', 'O técnico pediu para todo mundo beber bastante água no intervalo.',
+  'Vamos fazer um trabalho em grupo sobre a vegetação do cerrado.', 'A digestão começa na boca, quando a gente mastiga a comida.',
+  'Na fração três quartos, o quatro é o denominador e o três é o numerador.', 'Faça o dever de casa antes de ver o próximo episódio da série.',
+  'O Brasil declarou a independência em mil oitocentos e vinte e dois.', 'Minha prima vai fazer quinze anos e convidou a turma toda para a festa.',
+];
+const TEXT_KINDS = [['whatsapp', '💬 Mensagem'], ['post', '📱 Post'], ['legenda', '🖼️ Legenda'], ['redacao', '📝 Redação'], ['noticia', '📰 Notícia'], ['instrucao', '📋 Instrução (receita, regra)']];
+const kindName = k => (TEXT_KINDS.find(([x]) => x === k) || [k, k])[1];
+const TX = (kind, title, text, ...qs) => {
+  const o = { kind, title, text };
+  for (let i = 0; i < 3; i++) { const q = qs[i] || ['', '', '']; o['q' + (i + 1)] = q[0]; o['r' + (i + 1)] = q[1]; o['w' + (i + 1)] = q[2]; }
+  return o;
+};
+const TEXTS = [
+  TX('whatsapp', 'Mensagem no grupo da turma', 'Gente, o trabalho de geografia ficou para sexta-feira. A professora disse que pode ser em dupla. Quem vai fazer comigo? Eu topo dividir as partes: eu faço a pesquisa sobre a vegetação e você monta os slides. Depois a gente treina a apresentação no intervalo.',
+    ['Para quando ficou o trabalho?', 'sexta-feira', 'segunda-feira; quarta-feira'], ['Qual é o assunto da pesquisa?', 'a vegetação', 'o clima; a população'], ['Onde vão treinar a apresentação?', 'no intervalo', 'na biblioteca; na casa de alguém']),
+  TX('whatsapp', 'Mensagem para a mãe', 'Mãe, a aula de educação física acabou mais cedo porque começou a chover. Vou esperar na portaria da escola. Pode trazer meu tênis de futebol? Esqueci em cima da cadeira do quarto. Beijo!',
+    ['Por que a aula acabou mais cedo?', 'porque começou a chover', 'porque o professor faltou; porque teve prova'], ['Onde vai esperar?', 'na portaria da escola', 'na quadra; no ponto de ônibus'], ['O que ficou esquecido?', 'o tênis de futebol', 'a mochila; o celular']),
+  TX('post', 'Post do clube de leitura', 'Terminamos o livro do mês! A turma votou e o próximo será uma história de detetive que se passa numa cidade do interior. Quem quiser participar, o encontro é toda terça, depois da última aula, na biblioteca. Traga sua dúvida, sua opinião e, se puder, um pacote de biscoito.',
+    ['Que tipo de história será o próximo livro?', 'uma história de detetive', 'uma história de terror; um livro de poesia'], ['Quando é o encontro?', 'toda terça, depois da última aula', 'todo sábado de manhã; toda sexta no recreio'], ['O que pedem para levar, se puder?', 'um pacote de biscoito', 'um caderno novo; uma garrafa de suco']),
+  TX('post', 'Post da feira de ciências', 'Nossa equipe ganhou o segundo lugar na feira de ciências com um projeto sobre a digestão dos alimentos. Montamos um modelo do estômago com garrafas e tubos e mostramos como as enzimas ajudam a quebrar a comida. Valeu, professora Beatriz, pela paciência!'),
+  TX('legenda', 'Legenda da trilha', 'Pôr do sol visto do alto do morro, depois de duas horas de trilha. Valeu cada gota de suor. Próximo destino: a cachoeira do vale.'),
+  TX('legenda', 'Legenda do time', 'Time completo depois da vitória no campeonato da escola. Treinamos todo sábado de manhã e hoje o esforço deu resultado. Bora para a final!'),
+  TX('redacao', 'Redação: o celular na escola', 'Nos dias de hoje, o celular faz parte da vida de quase todos os estudantes. Ele ajuda a pesquisar, a combinar trabalhos e a conversar com os amigos. Por outro lado, o uso exagerado atrapalha o sono e a atenção nas aulas. Por isso, é importante definir horários e combinar regras com a família.'),
+  TX('redacao', 'Redação: o lixo da cidade', 'O descarte correto do lixo depende de todos. Quando separamos o plástico, o vidro e o papel, facilitamos o trabalho das cooperativas e diminuímos a poluição dos rios. A escola pode dar o exemplo com lixeiras coloridas e campanhas educativas.'),
+  TX('noticia', 'Notícia: alerta de chuva forte', 'A Defesa Civil emitiu um alerta de chuva forte para a tarde desta quinta-feira. A previsão é de ventos de até sessenta quilômetros por hora e queda de granizo em alguns bairros. A recomendação é evitar áreas alagadas e não ficar debaixo de árvores durante a tempestade.',
+    ['Para quando é o alerta?', 'quinta-feira à tarde', 'sábado de manhã; segunda à noite'], ['Até que velocidade pode chegar o vento?', 'sessenta quilômetros por hora', 'vinte quilômetros por hora; cem quilômetros por hora'], ['O que a Defesa Civil recomenda?', 'evitar áreas alagadas e não ficar debaixo de árvores', 'sair para ver a chuva; guardar o carro debaixo de uma árvore']),
+  TX('noticia', 'Notícia: biblioteca nova no bairro', 'A cidade inaugurou nesta segunda-feira uma biblioteca pública no bairro da Vila Verde. O prédio tem sala de estudos, computadores com internet e um espaço para contação de histórias. A biblioteca funciona de terça a sábado, das nove da manhã às oito da noite, e a entrada é gratuita.',
+    ['Em que bairro fica a biblioteca?', 'Vila Verde', 'Centro; Jardim das Flores'], ['Em quais dias ela funciona?', 'de terça a sábado', 'todos os dias; só no fim de semana'], ['Quanto custa a entrada?', 'é gratuita', 'dez reais; cinco reais']),
+  TX('noticia', 'Notícia: final do vôlei', 'O time feminino de vôlei da escola estadual venceu o campeonato regional no último domingo. A final foi decidida no quinto set, depois de mais de duas horas de jogo. A capitã do time, de quinze anos, disse que o segredo foi treinar a defesa todos os dias.',
+    ['De que esporte é a notícia?', 'vôlei', 'futebol; basquete'], ['Quando foi a final?', 'no último domingo', 'ontem à noite; no sábado passado'], ['Qual foi o segredo, segundo a capitã?', 'treinar a defesa todos os dias', 'trocar de técnico; jogar em casa']),
+  TX('instrucao', 'Receita: bolo de caneca', 'Numa caneca grande, misture um ovo, quatro colheres de leite e três colheres de óleo. Depois acrescente quatro colheres de açúcar, três de farinha de trigo e duas de chocolate em pó. Mexa bem e por último coloque uma colher de chá de fermento. Leve ao micro-ondas por dois minutos e meio.',
+    ['Quantos ovos vão na receita?', 'um', 'dois; três'], ['O que entra por último?', 'o fermento', 'o ovo; o chocolate'], ['Quanto tempo o bolo fica no micro-ondas?', 'dois minutos e meio', 'cinco minutos; trinta segundos']),
+  TX('instrucao', 'Regra do jogo: bate-bola', 'Cada jogador começa com três vidas. Quem está com a bola pode dar no máximo três passos antes de passar. Se a bola cair no chão, quem deixou cair perde uma vida. Ganha a última pessoa que ainda tiver pelo menos uma vida.',
+    ['Com quantas vidas cada jogador começa?', 'três', 'uma; cinco'], ['Quantos passos pode dar quem está com a bola?', 'no máximo três', 'quantos quiser; nenhum'], ['Quem ganha?', 'a última pessoa que ainda tiver vida', 'quem fizer mais pontos; quem der mais passos']),
+];
+
+/* ---------- conferência pelo som ---------- */
+const mainSounds = word => scanSounds(word).filter(o => MAIN_PHONS.includes(o.phon));
+const soundList = word => [...new Set(scanSounds(word).filter(o => MAIN_PHONS.includes(o.phon) || OPT_PHONS.includes(o.phon)).map(o => PHONEMES[o.phon].show))].join(', ');
+const wordsOf = text => String(text || '').split(/\s+/).map(w => w.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '')).filter(Boolean);
+const familyWords = r => String(r.words || '').split(',').map(x => x.trim()).filter(Boolean);
+function checkFamily(r) {
+  const ws = familyWords(r);
+  if (ws.length < 3) return 'Escreva pelo menos 3 palavras da família, separadas por vírgula.';
+  if (ws.length > 6) return 'No máximo 6 palavras.';
+  for (const w of ws) {
+    const o = scanSounds(w).find(x => x.phon === r.phon);
+    if (!o) return `Pelo som, “${w}” não tem ${PHONEMES[r.phon].ipa}. Lembre: c/g antes de e/i mudam de som.`;
+    if (!swapAt(w, o)) return `Em “${w}” não dá para trocar ${PHONEMES[r.phon].ipa} pelo par sem mudar outro som; escolha outra palavra.`;
+  }
+  return null;
+}
+const PSEUDO_RE = /^(?:(?:qu|gu|ch|[bcdfgjlmnprtvz])[aeiou]){2,4}$/;
+function checkPseudo(w) {
+  w = String(w || '').trim();
+  if (!w) return 'Escreva a pseudopalavra.';
+  if (!PSEUDO_RE.test(w)) return 'Use sílabas simples (consoante + vogal), de 2 a 4 sílabas, sem acento: ta-de-fo, vu-pe-ca. Use qu/gu antes de e/i.';
+  if (mainSounds(w).length < 2) return 'Use pelo menos 2 sons dos pares (P, B, T, D, F, V, C/QU, G/GU).';
+  if (realWords().has(w)) return `“${w}” é uma palavra de verdade (está nas listas do jogo).`;
+  return null;
+}
+/* Palavras reais conhecidas (para o gerador não "inventar" uma que existe). */
+const REAL_BLOCK = ('batata pipoca cabide tapete bigode pateta capote gaveta boneca tomate panela cavalo macaco peteca cadete debate pepino menino banana camelo '
+  + 'tecido bodega fivela favela vadio cabana cabelo capela cadela fubica copado tapado pagode gogo cabeça babado dedada vidente dedo dado gado fado bode pote bote tubo '
+  + 'cubo fogo foco faca vaca fita vida dica fada gota gado bico bife pipa tipo topo fato foto voto cabo bota pato gato tato tia dia copa cova capa cava pega toca doca').split(' ');
+let realCache = null;
+function realWords() {
+  if (realCache) return realCache;
+  const s = new Set(REAL_BLOCK);
+  for (const p of Bank.pairs) if (!p.pseudo) { s.add(plain(p.a.text)); s.add(plain(p.b.text)); }
+  for (const k of ['position', 'train', 'claps']) for (const r of Lists.get(k)) if (r.word) s.add(plain(r.word));
+  for (const k of Object.keys(SCHOOL_WORDS)) SCHOOL_WORDS[k].split(' ').forEach(w => s.add(plain(w)));
+  realCache = s;
+  setTimeout(() => { realCache = null; }, 60000);
+  return s;
+}
+/** Gera uma pseudopalavra pela regra: sílabas CV do PB, com os sons dos pares pedidos (qu/gu antes de e/i). */
+function genPseudo(phons, syl = 3) {
+  const P = (phons && phons.length ? phons : MAIN_PHONS).filter(x => MAIN_PHONS.includes(x));
+  const FILL = ['m', 'n', 'l', 'r'];
+  const V = ['a', 'e', 'i', 'o', 'u'];
+  const writeSyl = (c, v) => (c === 'k' ? ((v === 'e' || v === 'i') ? 'qu' : 'c') : c === 'g' ? ((v === 'e' || v === 'i') ? 'gu' : 'g') : c) + v;
+  for (let tries = 0; tries < 300; tries++) {
+    const cons = Array.from({ length: syl }, (_, i) => (i > 0 && i < syl - 1 && Math.random() < 0.2 ? FILL[rand(FILL.length)] : P[rand(P.length)]));
+    const vows = Array.from({ length: syl }, (_, i) => (i === syl - 1 ? ['a', 'e', 'o'][rand(3)] : V[rand(V.length)]));
+    if (new Set(vows).size === 1) continue;
+    const w = cons.map((c, i) => writeSyl(c, vows[i])).join('');
+    if (!checkPseudo(w)) return w;
+  }
+  return 'tadefo';
+}
+
+/* ---------- listas ---------- */
+Object.assign(LIST_DEFAULTS, {
+  school: () => Object.entries(SCHOOL_WORDS).flatMap(([subject, ws]) => ws.split(' ').map(word => ({ subject, word }))),
+  families: () => FAMILY_SETS.map(([phon, words]) => ({ phon, words })),
+  pseudo: () => PSEUDO_WORDS.map(word => ({ word })),
+  phrases: () => PHRASES.map((text, i) => ({ id: 'fr' + (i + 1), text })),
+  texts: () => TEXTS.map((t, i) => ({ id: 'tx' + (i + 1), ...t })),
+});
+const QFIELDS = [1, 2, 3].flatMap(i => [{ k: 'q' + i, label: `Pergunta ${i}`, type: 'text', wide: true }, { k: 'r' + i, label: 'Resposta certa', type: 'text' }, { k: 'w' + i, label: 'Respostas erradas (separe com ;)', type: 'text' }]);
+const textQuestions = r => [1, 2, 3].map(i => ({ q: (r['q' + i] || '').trim(), right: (r['r' + i] || '').trim(), wrong: String(r['w' + i] || '').split(';').map(x => x.trim()).filter(Boolean) })).filter(x => x.q);
+const hasQuestions = r => textQuestions(r).length === 3 && textQuestions(r).every(x => x.right && x.wrong.length >= 1);
+Object.assign(LIST_SCHEMAS, {
+  school: {
+    title: 'Vocabulário escolar', icon: '🎓',
+    help: 'Sintonia (Anagrama sonoro, Revisor): palavras das matérias com T/D, K/G, F/V ou P/B (S/Z e CH/J também valem). O jogo confere pelo som: c/g antes de e/i não contam como /k/ /g/.',
+    fields: [{ k: 'subject', label: 'Matéria', type: 'select', options: SUBJECTS }, wordField('word', 'Palavra')],
+    blank: () => ({ subject: 'ciencias', word: '' }),
+    summary: r => `${subjectName(r.subject)} · ${r.word} — sons: ${soundList(r.word) || '—'}`,
+    check: r => (!r.word.trim() ? 'Escreva a palavra.' : /\s/.test(r.word.trim()) ? 'Uma palavra só.' : !mainSounds(r.word).length ? `Pelo som, “${r.word}” não tem P, B, T, D, F, V, K ou G.` : null),
+    hint: r => (r.word.trim() ? `Sons dos pares: ${soundList(r.word.trim())} · ${syllables(r.word)} sílabas.` : ''),
+  },
+  families: {
+    title: 'Famílias de palavras', icon: '🌳',
+    help: 'Sintonia (Família do som): palavras da mesma família, separadas por vírgula, e o som da raiz que se mantém (foto, fotografia, fotógrafo → /f/). O jogo escreve uma delas com a troca para o adolescente achar.',
+    fields: [{ k: 'phon', label: 'Som da raiz', type: 'phon' }, { k: 'words', label: 'Palavras (separe com vírgula)', type: 'text', wide: true }],
+    blank: () => ({ phon: 'f', words: '' }),
+    summary: r => `${PHONEMES[r.phon].ipa} · ${familyWords(r).join(', ')}`,
+    check: checkFamily,
+    hint: r => { const w = familyWords(r)[0]; const o = w && scanSounds(w).find(x => x.phon === r.phon); const sw = o && swapAt(w, o); return sw ? `Exemplo de troca: ${w} → ${sw.text}.` : ''; },
+  },
+  pseudo: {
+    title: 'Pseudopalavras', icon: '👽',
+    help: 'Sintonia (Palavra que não existe): palavras inventadas com sílabas possíveis no PB (consoante + vogal), para treinar a rota fonológica sem a ajuda do sentido. Além desta lista, o jogo gera novas pela mesma regra.',
+    fields: [wordField('word', 'Pseudopalavra')],
+    blank: () => ({ word: '' }),
+    summary: r => `${r.word} — sons: ${soundList(r.word)} · ${syllables(r.word)} sílabas`,
+    check: r => checkPseudo(r.word),
+  },
+  phrases: {
+    title: 'Frases (ditado e fala acelerada)', icon: '🗣️',
+    help: 'Sintonia (Ditado de frases, Fala acelerada): frases do dia a dia, de 4 a 16 palavras, com sons dos pares. Gravação opcional em “Gravar palavras”.',
+    fields: [{ k: 'text', label: 'Frase', type: 'text', wide: true }],
+    blank: () => ({ id: uid(), text: '' }),
+    summary: r => `${r.text}   ·   ${wordsOf(r.text).length} palavras`,
+    check(r) {
+      const n = wordsOf(r.text).length;
+      if (n < 4 || n > 16) return 'A frase precisa ter de 4 a 16 palavras.';
+      if (mainSounds(r.text).length < 2) return 'Use pelo menos 2 sons dos pares (P, B, T, D, F, V, K, G).';
+      return null;
+    },
+  },
+  texts: {
+    title: 'Textos curtos', icon: '📰',
+    help: 'Sintonia (Revisor e Escuta no barulho): mensagem, post, legenda, redação, notícia ou instrução. O Revisor coloca as trocas sozinho. Para a Escuta no barulho, preencha as 3 perguntas (resposta certa + erradas separadas por ;).',
+    fields: [{ k: 'kind', label: 'Tipo', type: 'select', options: TEXT_KINDS }, { k: 'title', label: 'Título (só para a fono)', type: 'text', wide: true }, { k: 'text', label: 'Texto', type: 'longtext' }, ...QFIELDS],
+    blank: () => ({ id: uid(), kind: 'noticia', title: '', text: '', q1: '', r1: '', w1: '', q2: '', r2: '', w2: '', q3: '', r3: '', w3: '' }),
+    summary: r => `${kindName(r.kind)} · ${r.title || wordsOf(r.text).slice(0, 6).join(' ') + '…'} · ${wordsOf(r.text).length} palavras` + (hasQuestions(r) ? ' · com perguntas' : ''),
+    check(r) {
+      const n = wordsOf(r.text).length;
+      if (n < 15) return 'O texto precisa ter pelo menos 15 palavras.';
+      if (n > 140) return 'Texto longo demais (máximo 140 palavras).';
+      const qs = textQuestions(r);
+      if (qs.length && !hasQuestions(r)) return 'Perguntas: preencha as 3, cada uma com a resposta certa e pelo menos 1 errada.';
+      return null;
+    },
+    hint: r => `${wordsOf(r.text).length} palavras · Revisor nível ${textTier(r)}` + (hasQuestions(r) ? ' · entra na Escuta no barulho' : ''),
+  },
+});
+const listItems = k => Lists.get(k).filter(listOk(k));
+const schoolWords = () => listItems('school');
+const familySets = () => listItems('families').map(r => ({ phon: r.phon, words: familyWords(r) }));
+const pseudoWords = () => listItems('pseudo').map(r => r.word.trim());
+const phraseList = () => listItems('phrases');
+const textList = () => listItems('texts');
+/** Tamanho do texto para o Revisor: 1 curto (até 30 palavras), 2 médio (até 45), 3 longo. */
+const textTier = r => { const n = wordsOf(r.text).length; return n <= 30 ? 1 : n <= 45 ? 2 : 3; };
+/** Tamanho da frase: 1 até 7 palavras, 2 até 10, 3 mais longas. */
+const phraseTier = r => { const n = wordsOf(r.text).length; return n <= 7 ? 1 : n <= 10 ? 2 : 3; };
+
+/* Itens para gravar (aba "Gravar palavras"), conforme as atividades ligadas. */
+const DIGIT_WORDS = ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
+function extraRecordSections(uses) {
+  const out = [];
+  if (uses('attention')) {
+    out.push({
+      id: 'digits', title: 'Números da “Atenção dirigida” (1 a 9)', count: true,
+      note: 'A Atenção dirigida toca dois sons ao mesmo tempo, um em cada ouvido, e isso só funciona com gravação (a voz sintética não sai num ouvido só). Grave os números com a mesma intensidade e duração parecida.',
+      items: DIGIT_WORDS.slice(1).map((w, i) => ({ key: 'dg:' + (i + 1), text: String(i + 1), sub: w, tts: w, fig: h('span', { class: 'syl-fig' }, String(i + 1)), short: true })),
+    });
+  }
+  if (uses('sentdict', 'fast')) {
+    out.push({
+      id: 'phrases', title: 'Frases do “Ditado de frases” e da “Fala acelerada”', count: false, note: 'Opcional: sem gravação, o jogo usa a voz sintética do aparelho.',
+      items: phraseList().map(x => ({ key: 'fr:' + x.id, text: x.text, maxMs: 9000, long: true })),
+    });
+  }
+  if (uses('compnoise', 'reviser')) {
+    out.push({
+      id: 'texts', title: 'Textos do “Revisor” e da “Escuta no barulho”', count: false, note: 'Opcional: leia o texto inteiro, sem pressa (até 40 segundos). Sem gravação, o jogo usa a voz sintética.',
+      items: textList().map(x => ({ key: 'tx:' + x.id, text: x.title || x.text.slice(0, 60), sub: kindName(x.kind), tts: x.text, maxMs: 40000, long: true })),
+    });
+  }
+  return out;
+}
+
+/* @@PART3@@ */
+

@@ -1237,6 +1237,7 @@ function recordSections(gid) {
       items: sentences().map(x => ({ key: 'f:' + x.id, text: sentenceText(x), sub: (CONTRASTS[x.contrast] || CONTRASTS.outro).short + ' · trocada: ' + sentenceWrong(x), sentence: x, maxMs: 8000 })),
     });
   }
+  if (typeof extraRecordSections === 'function') out.push(...extraRecordSections(uses));   // Sintonia (sintonia.js)
   return out;
 }
 const sectionKeys = sec => (sec.pairs ? sec.pairs.flatMap(p => [p.id + ':a', p.id + ':b']) : sec.items.map(i => i.key));
@@ -1345,7 +1346,7 @@ async function renderRecordTab(el) {
     const recBtn = h('button', { class: 'btn rec-btn', type: 'button', disabled: !canRecord });
     const playBtn = h('button', { class: 'btn', type: 'button' }, '▶️ Ouvir');
     const delBtn = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Apagar gravação', title: 'Apagar gravação' }, '🗑️');
-    const row = h('div', { class: 'word-row' + (it.sentence ? ' sentence-row' : '') },
+    const row = h('div', { class: 'word-row' + (it.sentence || it.long ? ' sentence-row' : '') },
       h('div', { class: 'word-fig' }, it.fig || h('span', { class: 'fig-emoji' }, '💬')),
       h('div', { class: 'word-info' },
         h('span', { class: 'word-text' }, it.text),
@@ -5255,12 +5256,16 @@ function listItemDialog(k, item, onSave) {
       input = h('select', { class: 'input' }, PHONEME_ORDER.map(p => h('option', { value: p }, `${PHONEMES[p].ipa} (letra ${PHONEMES[p].show})`)));
     } else if (f.type === 'number') {
       input = h('input', { class: 'input', type: 'number', min: f.min, max: f.max, inputmode: 'numeric' });
+    } else if (f.type === 'select') {
+      input = h('select', { class: 'input' }, f.options.map(([v, label]) => h('option', { value: v }, label)));
+    } else if (f.type === 'longtext') {
+      input = h('textarea', { class: 'input', rows: 6, maxlength: 900, spellcheck: 'false' });
     } else {
       input = h('input', { class: 'input' + (f.type === 'emoji' ? ' emoji-input' : ''), type: 'text', autocomplete: 'off', spellcheck: 'false', maxlength: f.wide ? 140 : f.type === 'emoji' ? 16 : 30 });
     }
     input.value = d[f.k] == null ? '' : d[f.k];
     input.oninput = input.onchange = () => { d[f.k] = f.type === 'number' ? +input.value : input.value; if (k === 'claps' && f.k === 'word' && !item) { d.syl = syllables(input.value) || 1; const s = fields.find(x => x.k === 'syl'); if (s) s.input.value = d.syl; } refresh(); };
-    return { k: f.k, input, el: h('label', { class: 'field' + (f.type === 'emoji' ? ' emoji-field' : '') + (f.wide ? ' wide-field' : '') }, h('span', null, f.label), input) };
+    return { k: f.k, input, el: h('label', { class: 'field' + (f.type === 'emoji' ? ' emoji-field' : '') + (f.wide || f.type === 'longtext' ? ' wide-field' : '') }, h('span', null, f.label), input) };
   });
   refresh();
   const save = () => {
