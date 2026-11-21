@@ -3,7 +3,7 @@
  * Ao publicar uma versão nova, aumente o número em CACHE: o aparelho baixa
  * tudo de novo na próxima vez que abrir o jogo com internet e apaga o cache antigo.
  * (Os dados da fono ficam no IndexedDB e NÃO são afetados por isso.) */
-const CACHE = 'escuta-so-v6';
+const CACHE = 'escuta-so-v7';
 
 const ASSETS = [
   './',

@@ -172,7 +172,8 @@ async function teenFix(g, expected, answer, { expectedItem = null, answerItem = 
   const goOn = panel.querySelector('button');
   if (play) {
     const steps = [];
-    if (answer && answerItem !== false) steps.push({ ...(answerItem || textItem(answer)), el: ca });
+    const wrongIt = answerItem || textItem(answer);
+    if (answer && answerItem !== false && wrongIt.key && Bank.recorded.has(wrongIt.key)) steps.push({ ...wrongIt, el: ca });
     steps.push({ ...(expectedItem || textItem(expected)), el: cb });
     await g.play(steps, 'busy', 650);
   }
@@ -638,9 +639,13 @@ function extraRecordSections(uses) {
   if (uses('compnoise', 'reviser')) {
     out.push({
       id: 'texts', title: 'Textos do “Revisor” e da “Escuta no barulho”', count: false, note: 'Opcional: leia o texto inteiro, sem pressa (até 40 segundos). Sem gravação, o jogo usa a voz sintética.',
-      items: textList().map(x => ({ key: 'tx:' + x.id, text: x.title || x.text.slice(0, 60), sub: kindName(x.kind), tts: x.text, maxMs: 40000, long: true })),
+      items: textList().map(x => ({ key: 'tx:' + x.id, text: x.title || kindName(x.kind), sub: kindName(x.kind), read: x.text, tts: x.text, maxMs: 45000, long: true })),
     });
   }
+  const words = (id, title, note, list) => out.push({ id, title, count: false, note, items: uniqueWords(list.map(w => W(w, ''))).map(w => ({ key: wordKey(w.text), text: w.text })) });
+  if (uses('anagram')) words('school', 'Vocabulário escolar (Anagrama sonoro)', 'Opcional: a palavra que o adolescente ouve como dica no Anagrama.', schoolWords().map(r => r.word));
+  if (uses('family')) words('families', 'Famílias de palavras (Família do som)', 'Opcional: as palavras que tocam no 🔊 da Família do som.', familySets().flatMap(f => f.words));
+  if (uses('pseudo', 'escape')) words('pseudo', 'Pseudopalavras (Palavra que não existe)', 'Opcional: leia como se fosse uma palavra de verdade (ta-DE-fo). As gravadas são usadas primeiro; as que o jogo inventa na hora usam a voz sintética.', pseudoWords());
   return out;
 }
 
@@ -809,10 +814,12 @@ Object.assign(ACTIVITIES, {
     build(ctx, n) {
       const syl = [2, 3, 3, 4][(ctx.level || 3) - 1];
       const listed = shuffle(pseudoWords().filter(w => syllables(w) === syl));
+      const rec = listed.filter(w => Bank.recorded.has(wordKey(w)));
       const used = new Set();
       const out = [];
       for (let i = 0; i < n; i++) {
-        let w = i % 2 === 0 && listed.length ? listed.pop() : genPseudo(ctx.phons, syl);
+        // Gravadas pela fono primeiro; depois metade da lista, metade inventada na hora.
+        let w = rec.length ? rec.pop() : i % 2 === 0 && listed.length ? listed.pop() : genPseudo(ctx.phons, syl);
         for (let k = 0; used.has(w) && k < 20; k++) w = genPseudo(ctx.phons, syl);
         used.add(w);
         out.push({ word: w, write: (ctx.level || 3) >= 3 });

@@ -42,7 +42,9 @@ Na tela inicial (ou em qualquer menu), **segure o botãozinho ⚙️ no canto po
 
   Sem essa gravação, o jogo toca uma palavra que começa com o som.
 - Palavras de cada atividade, sílabas do Código secreto, frases da Frase maluca (opcional) e sons de bichos e objetos (já vêm prontos; grave por cima se quiser).
-- **Sintonia:** os **números de 1 a 9** (obrigatórios para a Atenção dirigida, que toca um som em cada ouvido: a voz sintética não faz isso) e, se quiser, as **frases** e os **textos** (até 40 segundos cada).
+- **Sintonia:** os **números de 1 a 9** (obrigatórios para a Atenção dirigida, que toca um som em cada ouvido: a voz sintética não faz isso) e, se quiser, as **frases**, os **textos** do Revisor e da Escuta no barulho (o texto inteiro aparece embaixo do título para você ler; até 45 segundos cada), o **vocabulário escolar**, as **famílias de palavras** e as **pseudopalavras**. As pseudopalavras gravadas são usadas primeiro; as que o jogo inventa na hora usam a voz sintética.
+- Na correção da Sintonia, a forma **errada** só toca se estiver gravada (a voz sintética lê mal palavras trocadas e inventadas); a forma certa aparece escrita e toca sempre.
+- **Voz sintética melhor:** em **Ajustes → Voz sintética**, escolha a voz mais natural do aparelho, ajuste a velocidade e teste. No iPad dá para baixar vozes "Aprimoradas"/"Premium" (Ajustes → Acessibilidade → Conteúdo Falado → Vozes → Português (Brasil)); no Android, os dados de voz do Google em Português (Brasil). São de graça e funcionam sem internet.
 - O que não estiver gravado usa a **voz sintética** do aparelho, que é menos precisa. No jogo aparece o aviso "voz sintética".
 - **Ruído, filtro, "ouvir devagar" (0,75×) e som em um ouvido só são aplicados pelo jogo sobre a sua gravação.** Não precisa gravar versões extras.
 - **✏️ Editar** muda a palavra, o emoji ou a foto e escolhe as faixas do par. **➕ Novo par** cria pares novos.

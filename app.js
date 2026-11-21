@@ -13,7 +13,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '4.0.1';
 
 /* =========================================================================
  * 1. NÚCLEO
@@ -74,6 +74,8 @@ const DEFAULT_SETTINGS = {
   packs: {},              // pacote padrão de atividades por faixa: { faixa: { atividade: true/false } }
   noiseType: 'mix',       // ruído do "Ruído na escuta": mix | babble | rain | party
   ignoreAccents: true,    // Ditado de frases (Sintonia): acento errado não conta como erro
+  voiceName: '',          // voz sintética escolhida em Ajustes ('' = a melhor que o aparelho tiver)
+  voiceRate: 1,           // velocidade da voz sintética (multiplica a velocidade de cada atividade)
 };
 
 /* ---------- faixas etárias ----------
@@ -698,6 +700,7 @@ async function loadSettings() {
   delete s.trials;
   State.settings = s;
   AudioEngine.setVolume(s.volume);
+  ptVoice = pickVoice();
 }
 function saveSettings() { return DB.setKv('settings', State.settings); }
 
@@ -782,14 +785,21 @@ function contrastChip(cid) {
 /* ---------- tocar palavras ----------
  * Usa a gravação da fono; se não houver, a voz sintética pt-BR (menos precisa). */
 let ptVoice = null;
+const voiceLang = v => (v.lang || '').toLowerCase().replace('_', '-');
+/** Vozes em português do aparelho, das mais naturais para as mais robóticas. */
+function ptVoices() {
+  if (!('speechSynthesis' in window)) return [];
+  const score = v => (voiceLang(v) === 'pt-br' ? 10 : 0)
+    + (/natural|neural|premium|aprimorad|enhanced|melhorad/i.test(v.name) ? 6 : 0)
+    + (/google/i.test(v.name) ? 3 : 0)
+    + (/compact|eloquence|espeak/i.test(v.name) ? -4 : 0)
+    + (v.localService ? 1 : 0);
+  return speechSynthesis.getVoices().filter(v => voiceLang(v).startsWith('pt')).sort((a, b) => score(b) - score(a));
+}
 function pickVoice() {
-  if (!('speechSynthesis' in window)) return null;
-  const voices = speechSynthesis.getVoices();
-  const lang = v => (v.lang || '').toLowerCase().replace('_', '-');
-  return voices.find(v => lang(v) === 'pt-br' && v.localService)
-    || voices.find(v => lang(v) === 'pt-br')
-    || voices.find(v => lang(v).startsWith('pt'))
-    || null;
+  const list = ptVoices();
+  const want = typeof State !== 'undefined' && State.settings && State.settings.voiceName;
+  return (want && list.find(v => v.name === want)) || list[0] || null;
 }
 if ('speechSynthesis' in window) {
   ptVoice = pickVoice();
@@ -928,7 +938,7 @@ const Sound = {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'pt-BR';
       if (ptVoice) u.voice = ptVoice;
-      u.rate = rate;
+      u.rate = Math.max(0.3, Math.min(4, rate * (State.settings.voiceRate || 1)));
       u.volume = Math.min(1, State.settings.volume);
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
@@ -1353,7 +1363,8 @@ async function renderRecordTab(el) {
         it.sub && h('span', { class: 'muted small' }, it.sub),
         status),
       h('span', { class: 'meter', 'aria-hidden': 'true' }, fill),
-      h('div', { class: 'word-actions' }, recBtn, playBtn, delBtn));
+      h('div', { class: 'word-actions' }, recBtn, playBtn, delBtn),
+      it.read && h('p', { class: 'rec-read' }, it.read));
     const playSteps = () => (it.sentence ? sentenceSteps(it.sentence) : [{ key, text: it.tts || it.text, synth: it.synth }]);
 
     function paint(state = '') {
@@ -5923,6 +5934,22 @@ async function renderSettingsTab(el) {
     if (p) Sound.sequence([{ pair: p, side: 'a' }, { pair: p, side: 'b' }], s.pauseMs);
   };
 
+  const voiceSel = h('select', { class: 'input' });
+  const fillVoices = () => {
+    const vs = ptVoices();
+    voiceSel.replaceChildren(h('option', { value: '' }, vs.length ? `Automática (a melhor: ${vs[0].name})` : 'Nenhuma voz em português neste aparelho'),
+      ...vs.map(v => h('option', { value: v.name }, `${v.name} · ${v.lang}${v.localService ? '' : ' · precisa de internet'}`)));
+    voiceSel.value = vs.some(v => v.name === s.voiceName) ? s.voiceName : '';
+  };
+  fillVoices();
+  if ('speechSynthesis' in window) speechSynthesis.addEventListener('voiceschanged', fillVoices);
+  onLeave(() => { if ('speechSynthesis' in window) speechSynthesis.removeEventListener('voiceschanged', fillVoices); });
+  voiceSel.onchange = () => { s.voiceName = voiceSel.value; ptVoice = pickVoice(); save(); };
+  const rateOut = h('output', { class: 'range-out' }, Math.round((s.voiceRate || 1) * 100) + '%');
+  const rateIn = h('input', { type: 'range', min: 0.6, max: 1.3, step: 0.05, value: s.voiceRate || 1, 'aria-label': 'Velocidade da voz sintética' });
+  rateIn.oninput = () => { s.voiceRate = +rateIn.value; rateOut.textContent = Math.round(s.voiceRate * 100) + '%'; };
+  rateIn.onchange = save;
+  const voiceTest = () => { AudioEngine.unlock(); Sound.stop(); Sound.speak('A Defesa Civil emitiu um alerta de chuva forte para a tarde desta quinta-feira. Faca, vaca. Tia, dia.'); };
   const famCb = h('input', { type: 'checkbox', checked: s.familiarize !== false });
   famCb.onchange = () => { s.familiarize = famCb.checked; save(); };
   const famToggle = h('label', { class: 'check' }, famCb, h('span', null, 'Mostrar'));
@@ -5976,6 +6003,10 @@ async function renderSettingsTab(el) {
         h('p', { class: 'muted small' }, 'Volume das palavras e dos sons do jogo (o volume do aparelho também conta).')),
       h('div', { class: 'range-row' }, vol, volOut)),
     h('button', { class: 'btn small', type: 'button', onclick: test }, '🔊 Testar pausa e volume com um par'),
+    h('div', { class: 'setting' },
+      h('div', null, h('strong', null, 'Voz sintética (o que não foi gravado)'),
+        h('p', { class: 'muted small' }, 'Escolha a voz mais natural do aparelho e teste. Para ter vozes melhores (de graça, funcionam sem internet): no iPad, Ajustes → Acessibilidade → Conteúdo Falado → Vozes → Português (Brasil) → baixe uma voz “Aprimorada” ou “Premium” (ex.: Luciana). No Android, Configurações → Acessibilidade → Saída de texto para voz → Google → Instalar dados de voz → Português (Brasil). Depois feche e abra o jogo. O melhor de tudo continua sendo a sua gravação.')),
+      h('div', { class: 'voice-ctl' }, voiceSel, h('div', { class: 'range-row' }, rateIn, rateOut), h('button', { class: 'btn small', type: 'button', onclick: voiceTest }, '🔊 Testar a voz'))),
     h('div', { class: 'setting' },
       h('div', null, h('strong', null, 'Ditado de frases (Sintonia): ignorar acentos'),
         h('p', { class: 'muted small' }, 'Ligado: “cafe” no lugar de “café” não conta como erro. O ç sempre conta.')),
